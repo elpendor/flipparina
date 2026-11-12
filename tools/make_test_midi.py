@@ -43,7 +43,7 @@ def main():
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
     out.mkdir(parents=True, exist_ok=True)
 
-    chromatic = [(p, i * 700, i * 700 + 600) for i, p in enumerate(range(60, 77))]
+    chromatic = [(p, i * 700, i * 700 + 600) for i, p in enumerate(range(59, 78))]
     write_midi(out / "chromatic.mid", chromatic)
 
     repeats, t = [], 0

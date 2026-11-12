@@ -74,7 +74,6 @@ static int32_t player_thread(void* ctx) {
             &combo,
             next < song->count ? &song->notes[next] : NULL,
             &next_combo,
-            layout,
             player->tempo_pct);
 
         if(!wait_until(player, t0 + window.press_ms)) break;

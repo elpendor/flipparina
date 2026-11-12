@@ -25,7 +25,7 @@ static bool find_combo(int pitch, int8_t bend, bool mods, OcCombo* out) {
     size_t mod_count = mods ? sizeof(mod_values) : 1;
     for(size_t m = 0; m < mod_count; m++) {
         for(int b = 0; b < OcButtonCount; b++) {
-            if(base_pitch[b] + mod_values[m] + bend == pitch) {
+            if(base_pitch[b] + mod_values[m] + bend * BEND_SEMITONES == pitch) {
                 *out = (OcCombo){
                     .pitch = (uint8_t)pitch,
                     .button = (OcButton)b,
@@ -160,7 +160,6 @@ OcNoteWindow oc_note_window(
     const OcCombo* combo,
     const MidiNote* next,
     const OcCombo* next_combo,
-    OcLayout layout,
     int tempo_pct) {
     OcNoteWindow w = {.release = true};
     w.press_ms = scale_ms(note->start_ms, tempo_pct);
@@ -171,9 +170,8 @@ OcNoteWindow oc_note_window(
     if(next) {
         uint32_t next_start = scale_ms(next->start_ms, tempo_pct);
         uint32_t limit = next_start;
-        bool same = oc_uses_pad(layout) ? next_combo->button == combo->button :
-                                          next_combo->pitch == combo->pitch;
-        if(same) {
+        /* The game only starts a new note when the unbent pitch changes */
+        if(next_combo->pitch - next_combo->bend == combo->pitch - combo->bend) {
             limit = (next_start > w.press_ms + RETRIGGER_MS) ?
                         next_start - RETRIGGER_MS :
                         w.press_ms + (next_start - w.press_ms) / 2;

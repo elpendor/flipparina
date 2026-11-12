@@ -67,5 +67,4 @@ OcNoteWindow oc_note_window(
     const OcCombo* combo,
     const MidiNote* next,
     const OcCombo* next_combo,
-    OcLayout layout,
     int tempo_pct);

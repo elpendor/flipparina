@@ -23,7 +23,7 @@ Choose with the **Output** item on the main menu (OK or Left/Right switches it).
 
 | Output | For | How it plays | Notes |
 |---|---|---|---|
-| **N64 (NSO)** | OoT / MM in the Nintendo Switch Online N64 app | USB pad: A and C-buttons (right stick) | R/Z and stick bends add the in-between notes (C4–E5) |
+| **N64 (NSO)** | OoT / MM in the Nintendo Switch Online N64 app | USB pad: A and C-buttons (right stick) | R/Z (±1 semitone) and full stick bends (±2) cover every note from B3 to F5 |
 | **Switch 2** | Ocarina of Time on Switch 2 | USB pad: L, R, A, Y, X | Only the five plain notes. Untested |
 | **Speaker (mic)** | Ocarina of Time on Switch 2 | Flipper speaker, picked up by the console's microphone | No cable needed. Untested |
 

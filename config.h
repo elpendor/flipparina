@@ -19,8 +19,10 @@
 #define SPEAKER_MIN_PITCH 36
 #define SPEAKER_MAX_PITCH 96
 
+/* Full tilt is an exact 2-semitone bend: the game clamps there */
 #define BEND_STICK_UP   0x00
 #define BEND_STICK_DOWN 0xFF
+#define BEND_SEMITONES  2
 #define USE_STICK_BEND  1
 
 /* OoT runs at 20 fps */
