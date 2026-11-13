@@ -24,7 +24,7 @@ Choose with the **Output** item on the main menu (OK or Left/Right switches it).
 | Output | For | How it plays | Notes |
 |---|---|---|---|
 | **N64 (NSO)** | OoT / MM in the Nintendo Switch Online N64 app | USB pad: A and C-buttons (right stick) | R/Z (±1 semitone) and full stick bends (±2) cover every note from B3 to F5 |
-| **Switch 2** | Ocarina of Time on Switch 2 | USB pad: L, R, A, Y, X | Only the five plain notes. Untested |
+| **Switch 2** | Ocarina of Time on Switch 2 | USB pad: L, R, A, Y, X | Left stick bends (full tilt ±2, half tilt ±1) cover C4 to E5 |
 | **Speaker (mic)** | Ocarina of Time on Switch 2 | Flipper speaker, picked up by the console's microphone | No cable needed. Untested |
 
 ### Menu
@@ -32,7 +32,8 @@ Choose with the **Output** item on the main menu (OK or Left/Right switches it).
 - **Ocarina of Time songs** / **Majora's Mask songs**: the built-in songs.
 - **Play MIDI file**: plays the melody of a `.mid` file from `SD:/apps_data/flipparina/`. Notes the current output can't play are skipped. `tools/ocarina_fit.py` moves a melody into the ocarina's range.
 - **Output**: see above.
-- **Tap L+R** / **Tap A**: press those buttons on the pad, for console menus.
+- **Ocarina on** (N64): which C button the ocarina is assigned to, so the Flipper can take it out. Asked the first time it's needed.
+- **Take control** (Switch 2): makes the Flipper the active controller. Runs by itself on the first play after connecting; use it again after using the Joy-Cons.
 
 ### Player controls
 

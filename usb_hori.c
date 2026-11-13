@@ -342,6 +342,10 @@ void hori_usb_wake(uint16_t button, uint32_t hold_ms, uint32_t settle_ms) {
     s_woken_id = s_connection_id;
 }
 
+bool hori_usb_active(void) {
+    return furi_hal_usb_get_config() == &usb_hori;
+}
+
 bool hori_usb_is_connected(void) {
     return s_configured && !s_suspended;
 }

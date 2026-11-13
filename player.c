@@ -15,6 +15,8 @@ struct Player {
     int transpose;
     int tempo_pct;
     OcLayout layout;
+    bool take_out;
+    HoriReport take_out_report;
     volatile bool stop;
     PlayerNoteCallback on_note;
     PlayerDoneCallback on_done;
@@ -27,6 +29,31 @@ static bool wait_until(Player* player, uint32_t target) {
         furi_delay_ms(1);
     }
     return !player->stop;
+}
+
+static void take_out_ocarina(const HoriReport* press) {
+    HoriReport neutral;
+    hori_report_neutral(&neutral);
+    hori_usb_set_report(press);
+    furi_delay_ms(WAKE_HOLD_MS);
+    hori_usb_set_report(&neutral);
+    furi_delay_ms(OCARINA_OPEN_MS);
+}
+
+/* Replugging guarantees the Controllers screen: losing the active pad opens it,
+   and otherwise the first press of a new pad does */
+bool player_skip_controller_prompt(void) {
+    hori_usb_stop();
+    furi_delay_ms(REPLUG_MS);
+    if(!hori_usb_start()) return false;
+    for(uint32_t t = 0; !hori_usb_is_connected(); t += 50) {
+        if(t >= REPLUG_TIMEOUT_MS) return false;
+        furi_delay_ms(50);
+    }
+    hori_usb_wake(APPLET_OPEN_BUTTON, WAKE_HOLD_MS, APPLET_OPEN_MS);
+    hori_usb_wake(HORI_BTN_L | HORI_BTN_R, APPLET_HOLD_MS, APPLET_STEP_MS);
+    hori_usb_wake(HORI_BTN_A, APPLET_HOLD_MS, APPLET_CLOSE_MS);
+    return true;
 }
 
 static void press(const OcCombo* combo, OcLayout layout, HoriReport* report) {
@@ -56,8 +83,9 @@ static int32_t player_thread(void* ctx) {
     hori_usb_set_report(&neutral);
 
     if(pad) {
-        if(hori_usb_needs_wake())
-            hori_usb_wake(oc_wake_button(layout), WAKE_HOLD_MS, WAKE_SETTLE_MS);
+        if(layout == OcLayoutN64 && hori_usb_needs_wake())
+            hori_usb_wake(WAKE_BUTTON, WAKE_HOLD_MS, WAKE_SETTLE_MS);
+        if(player->take_out) take_out_ocarina(&player->take_out_report);
     } else if(!furi_hal_speaker_acquire(SPEAKER_ACQUIRE_MS)) {
         player->on_done(player->ctx);
         return 0;
@@ -101,6 +129,7 @@ Player* player_start(
     int transpose,
     int tempo_pct,
     OcLayout layout,
+    const HoriReport* take_out,
     PlayerNoteCallback on_note,
     PlayerDoneCallback on_done,
     void* ctx) {
@@ -110,12 +139,14 @@ Player* player_start(
         .transpose = transpose,
         .tempo_pct = tempo_pct,
         .layout = layout,
+        .take_out = take_out != NULL,
         .on_note = on_note,
         .on_done = on_done,
         .ctx = ctx,
     };
     player->thread =
         furi_thread_alloc_ex("FlipparinaPlayer", PLAYER_STACK_SIZE, player_thread, player);
+    if(take_out) player->take_out_report = *take_out;
     furi_thread_set_priority(player->thread, FuriThreadPriorityHigh);
     furi_thread_start(player->thread);
     return player;

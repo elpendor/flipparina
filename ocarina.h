@@ -43,7 +43,6 @@ const char* oc_pitch_class_name(int pitch);
 
 bool oc_map(int pitch, OcLayout layout, OcCombo* out);
 
-uint16_t oc_wake_button(OcLayout layout);
 
 bool oc_uses_pad(OcLayout layout);
 

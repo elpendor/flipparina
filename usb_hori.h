@@ -18,6 +18,7 @@
 #define HORI_BTN_HOME    0x1000
 #define HORI_BTN_CAPTURE 0x2000
 
+#define HORI_HAT_LEFT   0x06
 #define HORI_HAT_CENTER 0x08
 #define HORI_STICK_MIN  0x00
 #define HORI_STICK_MID  0x80
@@ -38,6 +39,7 @@ void hori_report_neutral(HoriReport* r);
 bool hori_usb_start(void);
 void hori_usb_stop(void);
 bool hori_usb_is_connected(void);
+bool hori_usb_active(void);
 uint32_t hori_usb_connection_id(void);
 
 /* The console swallows the first press after connecting */

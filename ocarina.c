@@ -25,7 +25,7 @@ static bool find_combo(int pitch, int8_t bend, bool mods, OcCombo* out) {
     size_t mod_count = mods ? sizeof(mod_values) : 1;
     for(size_t m = 0; m < mod_count; m++) {
         for(int b = 0; b < OcButtonCount; b++) {
-            if(base_pitch[b] + mod_values[m] + bend * BEND_SEMITONES == pitch) {
+            if(base_pitch[b] + mod_values[m] + bend == pitch) {
                 *out = (OcCombo){
                     .pitch = (uint8_t)pitch,
                     .button = (OcButton)b,
@@ -40,15 +40,21 @@ static bool find_combo(int pitch, int8_t bend, bool mods, OcCombo* out) {
 }
 
 bool oc_map(int pitch, OcLayout layout, OcCombo* out) {
-    /* Remake: sharps, flats and bends unknown */
-    if(layout == OcLayoutRemake) return find_combo(pitch, 0, false, out);
+    if(layout == OcLayoutRemake) {
+        static const int8_t bends[] = {0, BEND_SEMITONES, -BEND_SEMITONES, 1, -1};
+        for(size_t i = 0; i < sizeof(bends); i++) {
+            if(find_combo(pitch, bends[i], false, out)) return true;
+        }
+        return false;
+    }
     if(layout == OcLayoutSpeaker) {
         *out = (OcCombo){.pitch = (uint8_t)pitch};
         return pitch >= SPEAKER_MIN_PITCH && pitch <= SPEAKER_MAX_PITCH;
     }
     if(find_combo(pitch, 0, true, out)) return true;
 #if USE_STICK_BEND
-    return find_combo(pitch, 1, true, out) || find_combo(pitch, -1, true, out);
+    return find_combo(pitch, BEND_SEMITONES, true, out) ||
+           find_combo(pitch, -BEND_SEMITONES, true, out);
 #else
     return false;
 #endif
@@ -76,8 +82,14 @@ static void report_n64(const OcCombo* combo, HoriReport* report) {
     }
     if(combo->mod < 0) report->buttons |= MAP_N64_Z;
     if(combo->mod > 0) report->buttons |= MAP_N64_R;
-    if(combo->bend > 0) report->ly = BEND_STICK_UP;
-    if(combo->bend < 0) report->ly = BEND_STICK_DOWN;
+}
+
+static uint8_t bend_stick(int8_t bend) {
+    if(bend >= BEND_SEMITONES) return BEND_STICK_UP;
+    if(bend <= -BEND_SEMITONES) return BEND_STICK_DOWN;
+    if(bend > 0) return BEND_HALF_UP;
+    if(bend < 0) return BEND_HALF_DOWN;
+    return HORI_STICK_MID;
 }
 
 static const uint16_t remake_buttons[OcButtonCount] = {
@@ -95,6 +107,7 @@ void oc_combo_report(const OcCombo* combo, OcLayout layout, HoriReport* report) 
     } else {
         report_n64(combo, report);
     }
+    report->ly = bend_stick(combo->bend);
 }
 
 bool oc_uses_pad(OcLayout layout) {
@@ -103,10 +116,6 @@ bool oc_uses_pad(OcLayout layout) {
 
 float oc_pitch_hz(int pitch) {
     return 440.0f * powf(2.0f, (float)(pitch - 69) / 12.0f);
-}
-
-uint16_t oc_wake_button(OcLayout layout) {
-    return layout == OcLayoutRemake ? WAKE_BUTTON_REMAKE : WAKE_BUTTON_N64;
 }
 
 OcStats oc_stats(const MidiSong* song, int transpose, OcLayout layout) {
@@ -170,8 +179,10 @@ OcNoteWindow oc_note_window(
     if(next) {
         uint32_t next_start = scale_ms(next->start_ms, tempo_pct);
         uint32_t limit = next_start;
-        /* The game only starts a new note when the unbent pitch changes */
-        if(next_combo->pitch - next_combo->bend == combo->pitch - combo->bend) {
+        /* The game only starts a new note when the unbent pitch changes, and the
+           remake misses notes whose button and bend change at the same time */
+        if(next_combo->pitch - next_combo->bend == combo->pitch - combo->bend ||
+           next_combo->bend != combo->bend) {
             limit = (next_start > w.press_ms + RETRIGGER_MS) ?
                         next_start - RETRIGGER_MS :
                         w.press_ms + (next_start - w.press_ms) / 2;

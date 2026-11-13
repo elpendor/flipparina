@@ -17,6 +17,7 @@
 
 #define DATA_DIR    EXT_PATH("apps_data/flipparina")
 #define LAYOUT_FILE DATA_DIR "/layout.txt"
+#define OCARINA_C_FILE DATA_DIR "/ocarina_c.txt"
 
 #define SCREEN_W      128
 #define HEADER_Y      10
@@ -39,8 +40,8 @@ typedef enum {
     MenuOotSongs,
     MenuMmSongs,
     MenuLayout,
-    MenuTapLR,
-    MenuTapA,
+    MenuOcarinaC,
+    MenuSkipPrompt,
     MenuCount,
 } MenuItem;
 
@@ -49,8 +50,8 @@ static const char* const menu_labels[MenuCount] = {
     "Ocarina of Time songs",
     "Majora's Mask songs",
     NULL,
-    "Tap L+R (pair pad)",
-    "Tap A",
+    NULL,
+    "Take control",
 };
 
 static const char* const layout_labels[OcLayoutCount] = {
@@ -65,12 +66,24 @@ static const char* const layout_ids[OcLayoutCount] = {
     [OcLayoutSpeaker] = "speaker",
 };
 
+/* N64: the C button the ocarina is assigned to */
+static const OcButton ocarina_c_buttons[] = {OcCLeft, OcCDown, OcCRight};
+static const char* const ocarina_c_labels[] = {
+    "Ocarina on: C-Left",
+    "Ocarina on: C-Down",
+    "Ocarina on: C-Right",
+};
+static const char* const ocarina_c_ids[] = {"left", "down", "right"};
+#define OCARINA_C_COUNT 3
+
 typedef enum {
     ActionNone,
     ActionExit,
     ActionPickFile,
-    ActionTapLR,
-    ActionTapA,
+    ActionSkipPrompt,
+    ActionAskOcarina,
+    ActionFirstPlay,
+    ActionOutputChanged,
 } Action;
 
 typedef enum {
@@ -90,7 +103,9 @@ typedef struct {
     FuriMutex* mutex;
     DialogsApp* dialogs;
     bool usb_ok;
+    uint32_t controlled_id; /* connection the Flipper took control on */
     OcLayout layout;
+    int ocarina_c; /* index into ocarina_c_buttons, -1 = ask */
 
     Screen screen;
     Screen player_back;
@@ -181,28 +196,44 @@ static void change_tempo(App* app, int delta) {
     if(t >= TEMPO_MIN_PCT && t <= TEMPO_MAX_PCT) app->tempo_pct = t;
 }
 
-static OcLayout load_layout(Storage* storage) {
-    OcLayout layout = OcLayoutN64;
+static int load_setting(
+    Storage* storage,
+    const char* path,
+    const char* const* ids,
+    int count,
+    int fallback) {
+    int value = fallback;
     char id[16] = {0};
     File* file = storage_file_alloc(storage);
-    if(storage_file_open(file, LAYOUT_FILE, FSAM_READ, FSOM_OPEN_EXISTING)) {
+    if(storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
         storage_file_read(file, id, sizeof(id) - 1);
-        for(int i = 0; i < OcLayoutCount; i++) {
-            if(strcmp(id, layout_ids[i]) == 0) layout = (OcLayout)i;
+        for(int i = 0; i < count; i++) {
+            if(strcmp(id, ids[i]) == 0) value = i;
         }
     }
     storage_file_free(file);
-    return layout;
+    return value;
 }
 
-static void save_layout(OcLayout layout) {
+static void save_setting(const char* path, const char* id) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
     File* file = storage_file_alloc(storage);
-    if(storage_file_open(file, LAYOUT_FILE, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        storage_file_write(file, layout_ids[layout], strlen(layout_ids[layout]));
+    if(storage_file_open(file, path, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        storage_file_write(file, id, strlen(id));
     }
     storage_file_free(file);
     furi_record_close(RECORD_STORAGE);
+}
+
+/* The speaker output must not show up as a controller */
+static void update_usb(App* app) {
+    bool want = oc_uses_pad(app->layout);
+    if(want == app->usb_ok) return;
+    bool ok = want && hori_usb_start();
+    if(!want) hori_usb_stop();
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    app->usb_ok = ok;
+    furi_mutex_release(app->mutex);
 }
 
 static void on_player_note(int32_t note_index, void* ctx) {
@@ -219,51 +250,72 @@ static void on_player_done(void* ctx) {
     furi_message_queue_put(app->queue, &ev, FuriWaitForever);
 }
 
-static void start_playback(App* app) {
-    if(is_playing(app) || !furi_string_empty(app->error)) return;
-    if(oc_uses_pad(app->layout) && !app->usb_ok) return;
-    if(app->stats.playable == 0) return;
+static bool can_play(const App* app) {
+    if(is_playing(app) || !furi_string_empty(app->error)) return false;
+    if(oc_uses_pad(app->layout) && !app->usb_ok) return false;
+    return app->stats.playable > 0;
+}
+
+static void start_playback(App* app, bool take_out) {
+    if(!can_play(app)) return;
     app->current_note = -1;
+    HoriReport report;
+    hori_report_neutral(&report);
+    if(app->layout == OcLayoutRemake) {
+        report.hat = HORI_HAT_LEFT;
+    } else if(take_out && app->ocarina_c >= 0) {
+        OcCombo item = {.button = ocarina_c_buttons[app->ocarina_c]};
+        oc_combo_report(&item, OcLayoutN64, &report);
+    }
     app->player = player_start(
         &app->song,
         app->transpose,
         app->tempo_pct,
         app->layout,
+        take_out ? &report : NULL,
         on_player_note,
         on_player_done,
         app);
 }
 
-static void show_notice(App* app, const char* text) {
+static void show_notice_for(App* app, const char* text, uint32_t ms) {
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->notice = text;
-    app->notice_until = furi_get_tick() + NOTICE_MS;
+    app->notice_until = furi_get_tick() + ms;
     furi_mutex_release(app->mutex);
     view_port_update(app->view_port);
 }
 
-static void tap_buttons(App* app, uint16_t buttons, const char* sent_notice) {
-    if(!app->usb_ok || !hori_usb_is_connected()) {
-        show_notice(app, "Not connected");
-        return;
-    }
-    show_notice(app, "Pressing...");
-    if(hori_usb_needs_wake()) hori_usb_wake(oc_wake_button(app->layout), WAKE_HOLD_MS, WAKE_SETTLE_MS);
-    HoriReport report;
-    hori_report_neutral(&report);
-    report.buttons = buttons;
-    hori_usb_set_report(&report);
-    furi_delay_ms(TAP_HOLD_MS);
-    hori_report_neutral(&report);
-    hori_usb_set_report(&report);
-    show_notice(app, sent_notice);
+static void show_notice(App* app, const char* text) {
+    show_notice_for(app, text, NOTICE_MS);
 }
 
 typedef const char* (*ListLabel)(size_t index, const void* ctx);
 
+static bool skip_controller_prompt(App* app) {
+    if(app->layout != OcLayoutRemake) {
+        show_notice(app, "Switch 2 only");
+        return false;
+    }
+    if(!app->usb_ok || !hori_usb_is_connected()) {
+        show_notice(app, "Not connected");
+        return false;
+    }
+    show_notice_for(app, "Wait...", 60000);
+    bool ok = player_skip_controller_prompt();
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    if(ok) app->controlled_id = hori_usb_connection_id();
+    app->usb_ok = hori_usb_active();
+    furi_mutex_release(app->mutex);
+    show_notice(app, ok ? "Ready" : "Not connected");
+    return ok;
+}
+
 static const char* menu_label(size_t index, const void* ctx) {
     const App* app = ctx;
     if(index == MenuLayout) return layout_labels[app->layout];
+    if(index == MenuOcarinaC)
+        return app->ocarina_c < 0 ? "Ocarina on: ask" : ocarina_c_labels[app->ocarina_c];
     return menu_labels[index];
 }
 
@@ -353,8 +405,9 @@ static void draw_text(Canvas* canvas, int x, int y, const char* text) {
 
 static const char* status_label(const App* app) {
     if(app->notice && (int32_t)(app->notice_until - furi_get_tick()) > 0) return app->notice;
-    if(!app->usb_ok) return "USB busy";
     if(app->screen == ScreenPlayer && is_playing(app)) return NULL;
+    if(!oc_uses_pad(app->layout)) return "Speaker";
+    if(!app->usb_ok) return "USB busy";
     return hori_usb_is_connected() ? "USB" : "--";
 }
 
@@ -458,7 +511,14 @@ static void draw_builtin(Canvas* canvas, const App* app) {
     draw_text(canvas, 0, LINE_Y(1), line);
     snprintf(line, sizeof(line), "Tempo %d%%", app->tempo_pct);
     canvas_draw_str(canvas, 0, LINE_Y(2), line);
-    canvas_draw_str(canvas, 0, LINE_Y(4), "Take out the ocarina,");
+    if(app->layout == OcLayoutRemake) {
+        if(app->controlled_id == hori_usb_connection_id()) {
+            canvas_draw_str(canvas, 0, LINE_Y(3), "Used the Joy-Cons?");
+            canvas_draw_str(canvas, 0, LINE_Y(4), "Menu > Take control");
+        } else {
+            canvas_draw_str(canvas, 0, LINE_Y(4), "OK takes control first");
+        }
+    }
     draw_text(canvas, 0, LINE_Y(5), "OK play  " ARROW_LEFT ARROW_RIGHT " tempo");
 }
 
@@ -546,7 +606,13 @@ static Action input_menu(App* app, const InputEvent* in) {
     if(app->menu_index == MenuLayout &&
        (in->key == InputKeyOk || in->key == InputKeyLeft || in->key == InputKeyRight)) {
         app->layout = (OcLayout)((app->layout + 1) % OcLayoutCount);
-        save_layout(app->layout);
+        save_setting(LAYOUT_FILE, layout_ids[app->layout]);
+        return ActionOutputChanged;
+    }
+    if(app->menu_index == MenuOcarinaC &&
+       (in->key == InputKeyOk || in->key == InputKeyLeft || in->key == InputKeyRight)) {
+        app->ocarina_c = (app->ocarina_c + 1) % OCARINA_C_COUNT;
+        save_setting(OCARINA_C_FILE, ocarina_c_ids[app->ocarina_c]);
         return ActionNone;
     }
     if(in->key != InputKeyOk) return ActionNone;
@@ -560,10 +626,8 @@ static Action input_menu(App* app, const InputEvent* in) {
         app->song_index = 0;
         app->screen = ScreenSongs;
         return ActionNone;
-    case MenuTapLR:
-        return ActionTapLR;
-    case MenuTapA:
-        return ActionTapA;
+    case MenuSkipPrompt:
+        return ActionSkipPrompt;
     default:
         return ActionNone;
     }
@@ -598,7 +662,11 @@ static Action input_player(App* app, const InputEvent* in) {
             app->screen = app->player_back;
             return ActionNone;
         case InputKeyOk:
-            start_playback(app);
+            if(!can_play(app)) return ActionNone;
+            if(app->layout == OcLayoutRemake && hori_usb_connection_id() != app->controlled_id)
+                return ActionFirstPlay;
+            if(oc_uses_pad(app->layout)) return ActionAskOcarina;
+            start_playback(app, false);
             return ActionNone;
         case InputKeyRight:
             change_tempo(app, TEMPO_STEP_PCT);
@@ -634,6 +702,38 @@ static Action handle_input(App* app, const InputEvent* in) {
         return input_player(app, in);
     }
     return ActionNone;
+}
+
+static void ask_ocarina(App* app) {
+    DialogMessage* msg = dialog_message_alloc();
+    dialog_message_set_header(msg, "Is the ocarina out?", 64, 20, AlignCenter, AlignCenter);
+    dialog_message_set_text(msg, "No: Flipper takes it out", 64, 36, AlignCenter, AlignCenter);
+    dialog_message_set_buttons(msg, "No", NULL, "Yes");
+    view_port_enabled_set(app->view_port, false);
+    DialogMessageButton answer = dialog_message_show(app->dialogs, msg);
+    view_port_enabled_set(app->view_port, true);
+    dialog_message_free(msg);
+    if(answer == DialogMessageButtonBack) return;
+    bool take_out = answer == DialogMessageButtonLeft;
+    if(take_out && app->layout == OcLayoutN64 && app->ocarina_c < 0) {
+        msg = dialog_message_alloc();
+        dialog_message_set_header(msg, "Ocarina on which C?", 64, 20, AlignCenter, AlignCenter);
+        dialog_message_set_text(msg, "Change it in the menu", 64, 36, AlignCenter, AlignCenter);
+        dialog_message_set_buttons(msg, "Left", "Down", "Right");
+        view_port_enabled_set(app->view_port, false);
+        answer = dialog_message_show(app->dialogs, msg);
+        view_port_enabled_set(app->view_port, true);
+        dialog_message_free(msg);
+        if(answer == DialogMessageButtonBack) return;
+        app->ocarina_c = answer == DialogMessageButtonLeft   ? 0 :
+                         answer == DialogMessageButtonCenter ? 1 :
+                                                               2;
+        save_setting(OCARINA_C_FILE, ocarina_c_ids[app->ocarina_c]);
+    }
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    start_playback(app, take_out);
+    furi_mutex_release(app->mutex);
 }
 
 static void pick_file(App* app) {
@@ -677,6 +777,7 @@ static App* app_alloc(void) {
     app->tempo_pct = 100;
     app->channel = -1;
     app->current_note = -1;
+    app->controlled_id = UINT32_MAX;
     app->screen = ScreenMenu;
     app->path = furi_string_alloc();
     app->title = furi_string_alloc();
@@ -687,7 +788,8 @@ static App* app_alloc(void) {
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     storage_simply_mkdir(storage, DATA_DIR);
-    app->layout = load_layout(storage);
+    app->layout = (OcLayout)load_setting(storage, LAYOUT_FILE, layout_ids, OcLayoutCount, 0);
+    app->ocarina_c = load_setting(storage, OCARINA_C_FILE, ocarina_c_ids, OCARINA_C_COUNT, -1);
     furi_record_close(RECORD_STORAGE);
 
     app->view_port = view_port_alloc();
@@ -696,7 +798,7 @@ static App* app_alloc(void) {
     app->gui = furi_record_open(RECORD_GUI);
     gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
 
-    app->usb_ok = hori_usb_start();
+    update_usb(app);
     return app;
 }
 
@@ -750,11 +852,17 @@ int32_t flipparina_app(void* p) {
         case ActionPickFile:
             pick_file(app);
             break;
-        case ActionTapLR:
-            tap_buttons(app, HORI_BTN_L | HORI_BTN_R, "Sent L+R");
+        case ActionFirstPlay:
+            if(skip_controller_prompt(app)) ask_ocarina(app);
             break;
-        case ActionTapA:
-            tap_buttons(app, HORI_BTN_A, "Sent A");
+        case ActionAskOcarina:
+            ask_ocarina(app);
+            break;
+        case ActionSkipPrompt:
+            skip_controller_prompt(app);
+            break;
+        case ActionOutputChanged:
+            update_usb(app);
             break;
         case ActionNone:
             break;
