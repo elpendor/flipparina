@@ -9,5 +9,6 @@ App(
     fap_icon="icon.png",
     fap_icon_assets="images",
     fap_version="1.0",
-    fap_description="Plays ocarina songs and MIDI melodies in Zelda: Ocarina of Time / Majora's Mask (Switch Online N64) as a wired USB pad",
+    fap_author="@elpendor",
+    fap_description="Plays Zelda ocarina songs and MIDI melodies on the Switch, as a USB pad or through the speaker",
 )

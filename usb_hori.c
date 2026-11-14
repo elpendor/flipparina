@@ -5,6 +5,7 @@
 #include <furi_hal_usb.h>
 #include <string.h>
 
+#include "config.h"
 #include "usb.h"
 
 #define HORI_VID 0x0F0D
@@ -300,6 +301,7 @@ static FuriHalUsbInterface usb_hori = {
 };
 
 bool hori_usb_start(void) {
+    if(SCREENSHOT_MODE) return true;
     hori_report_neutral(&s_report);
     s_tx = s_report;
     s_prev_intf = furi_hal_usb_get_config();
@@ -308,6 +310,7 @@ bool hori_usb_start(void) {
 }
 
 void hori_usb_stop(void) {
+    if(SCREENSHOT_MODE) return;
     if(furi_hal_usb_set_config(s_prev_intf, NULL)) return;
 
     FURI_LOG_W("Flipparina", "restoring USB mode failed, retrying");
@@ -341,10 +344,12 @@ void hori_usb_wake(uint16_t button, uint32_t hold_ms, uint32_t settle_ms) {
 }
 
 bool hori_usb_active(void) {
+    if(SCREENSHOT_MODE) return true;
     return furi_hal_usb_get_config() == &usb_hori;
 }
 
 bool hori_usb_is_connected(void) {
+    if(SCREENSHOT_MODE) return true;
     return s_configured && !s_suspended;
 }
 

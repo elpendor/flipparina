@@ -57,3 +57,6 @@
 #define TRANSPOSE_SEARCH 24
 
 #define PLAYER_STACK_SIZE 2048
+
+/* 1: fake the USB pad so qFlipper stays connected for screenshots */
+#define SCREENSHOT_MODE 0

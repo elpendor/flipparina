@@ -2,6 +2,12 @@
 
 A Flipper Zero app that plays the ocarina in *Zelda: Ocarina of Time* and *Majora's Mask*. It either acts as a wired USB pad and presses the buttons for you, or plays the notes out loud for the Switch 2 version's microphone.
 
+<p align="center">
+  <img src="screenshots/ss0.png" alt="Main menu" width="256">
+  <img src="screenshots/ss1.png" alt="Ocarina of Time songs" width="256">
+  <img src="screenshots/ss2.png" alt="Zelda's Lullaby" width="256">
+</p>
+
 ## Install
 
 1. Download the `.fap` for your firmware from the [latest release](https://github.com/elpendor/flipparina/releases/latest): `flipparina-official-release.fap` for stock firmware, `flipparina-momentum-release.fap` for Momentum.
@@ -68,4 +74,4 @@ Button mapping, timing, stick bend and speaker pitch/volume are in `config.h`.
 
 The built-in songs use the games' own note data (`sOcarinaSongNotes`) from the [zeldaret/oot](https://github.com/zeldaret/oot) and [zeldaret/mm](https://github.com/zeldaret/mm) decompilation projects.
 
-Not affiliated with or endorsed by Nintendo. *The Legend of Zelda* is a trademark of Nintendo.
+Released under the [MIT License](LICENSE). Not affiliated with or endorsed by Nintendo. *The Legend of Zelda* is a trademark of Nintendo.
