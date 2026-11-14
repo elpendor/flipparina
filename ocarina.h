@@ -13,11 +13,11 @@ typedef enum {
 } OcButton;
 
 typedef enum {
-    OcLayoutN64,
-    OcLayoutRemake,
-    OcLayoutSpeaker,
-    OcLayoutCount,
-} OcLayout;
+    OcOutputN64,
+    OcOutputSwitch2,
+    OcOutputSpeaker,
+    OcOutputCount,
+} OcOutput;
 
 typedef struct {
     uint8_t pitch;
@@ -29,6 +29,7 @@ typedef struct {
 typedef struct {
     size_t playable;
     size_t bent;
+    size_t moved;
     size_t skipped;
 } OcStats;
 
@@ -41,24 +42,25 @@ typedef struct {
 uint8_t oc_button_pitch(OcButton button);
 const char* oc_pitch_class_name(int pitch);
 
-bool oc_map(int pitch, OcLayout layout, OcCombo* out);
+bool oc_map(int pitch, OcOutput output, bool fold, OcCombo* out);
 
 
-bool oc_uses_pad(OcLayout layout);
+bool oc_uses_pad(OcOutput output);
 
 float oc_pitch_hz(int pitch);
 
-void oc_combo_report(const OcCombo* combo, OcLayout layout, HoriReport* report);
+void oc_combo_report(const OcCombo* combo, OcOutput output, HoriReport* report);
 
-OcStats oc_stats(const MidiSong* song, int transpose, OcLayout layout);
+OcStats oc_stats(const MidiSong* song, int transpose, OcOutput output, bool fold);
 
-int oc_best_transpose(const MidiSong* song, OcLayout layout);
+int oc_best_transpose(const MidiSong* song, OcOutput output, bool fold);
 
 size_t oc_next_playable(
     const MidiSong* song,
     size_t from,
     int transpose,
-    OcLayout layout,
+    OcOutput output,
+    bool fold,
     OcCombo* combo);
 
 OcNoteWindow oc_note_window(

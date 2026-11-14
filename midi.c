@@ -344,8 +344,15 @@ bool midi_load_file(
         NoteSlot* a = p->notes;
         heap_sort(a, n);
         size_t m = 0;
+        /* Skyline: a lower note never interrupts a higher one that is still sounding */
         for(size_t i = 0; i < n; i++) {
-            if(m > 0 && a[m - 1].tick.start_tick == a[i].tick.start_tick) continue;
+            if(m > 0) {
+                TickNote prev = a[m - 1].tick;
+                TickNote cur = a[i].tick;
+                if(cur.start_tick == prev.start_tick) continue;
+                if(cur.start_tick < prev.start_tick + prev.dur_ticks && cur.pitch < prev.pitch)
+                    continue;
+            }
             a[m++] = a[i];
         }
 

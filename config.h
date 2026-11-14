@@ -7,12 +7,12 @@
 #define MAP_N64_Z HORI_BTN_ZL
 #define MAP_N64_R HORI_BTN_R
 
-/* Switch 2: from community guides, untested */
-#define MAP_REMAKE_D4 HORI_BTN_L
-#define MAP_REMAKE_F4 HORI_BTN_R
-#define MAP_REMAKE_A4 HORI_BTN_A
-#define MAP_REMAKE_B4 HORI_BTN_Y
-#define MAP_REMAKE_D5 HORI_BTN_X
+/* Switch 2 note buttons */
+#define MAP_SWITCH2_D4 HORI_BTN_L
+#define MAP_SWITCH2_F4 HORI_BTN_R
+#define MAP_SWITCH2_A4 HORI_BTN_A
+#define MAP_SWITCH2_B4 HORI_BTN_Y
+#define MAP_SWITCH2_D5 HORI_BTN_X
 
 #define SPEAKER_VOLUME    1.0f
 #define SPEAKER_OCTAVE    0
@@ -25,7 +25,7 @@
 #define BEND_SEMITONES  2
 #define USE_STICK_BEND  1
 
-/* Switch 2: half tilt for 1 semitone, untested */
+/* Switch 2: half tilt bends 1 semitone */
 #define BEND_HALF_UP   0x40
 #define BEND_HALF_DOWN 0xC0
 
@@ -40,7 +40,7 @@
 #define WAKE_HOLD_MS   100
 #define WAKE_SETTLE_MS 400
 
-/* Skip controller prompt: R-stick click opens it, L+R registers, A confirms, D-pad Left takes out the ocarina */
+/* Take control: R-stick click opens the Controllers screen, L+R registers, A confirms */
 #define APPLET_OPEN_BUTTON HORI_BTN_RSTICK
 #define APPLET_HOLD_MS  200
 #define APPLET_OPEN_MS  800

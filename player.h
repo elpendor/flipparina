@@ -13,13 +13,14 @@ Player* player_start(
     const MidiSong* song,
     int transpose,
     int tempo_pct,
-    OcLayout layout,
+    OcOutput output,
+    bool fold,
     const HoriReport* take_out,
     PlayerNoteCallback on_note,
     PlayerDoneCallback on_done,
     void* ctx);
 
-bool player_skip_controller_prompt(void);
+bool player_take_control(void);
 
 void player_request_stop(Player* player);
 

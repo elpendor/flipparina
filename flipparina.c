@@ -16,8 +16,9 @@
 #include "usb_hori.h"
 
 #define DATA_DIR    EXT_PATH("apps_data/flipparina")
-#define LAYOUT_FILE DATA_DIR "/layout.txt"
+#define OUTPUT_FILE DATA_DIR "/layout.txt"
 #define OCARINA_C_FILE DATA_DIR "/ocarina_c.txt"
+#define FOLD_FILE      DATA_DIR "/out_of_range.txt"
 
 #define SCREEN_W      128
 #define HEADER_Y      10
@@ -31,39 +32,47 @@
 
 typedef enum {
     ScreenMenu,
+    ScreenSettings,
     ScreenSongs,
     ScreenPlayer,
 } Screen;
 
 typedef enum {
-    MenuMidiFile,
     MenuOotSongs,
     MenuMmSongs,
-    MenuLayout,
-    MenuOcarinaC,
-    MenuSkipPrompt,
+    MenuMidiFile,
+    MenuTakeControl,
+    MenuSettings,
     MenuCount,
 } MenuItem;
 
 static const char* const menu_labels[MenuCount] = {
-    "Play MIDI file",
     "Ocarina of Time songs",
     "Majora's Mask songs",
-    NULL,
-    NULL,
+    "MIDI files",
     "Take control",
+    "Settings",
 };
 
-static const char* const layout_labels[OcLayoutCount] = {
-    [OcLayoutN64] = "Output: N64 (NSO)",
-    [OcLayoutRemake] = "Output: Switch 2",
-    [OcLayoutSpeaker] = "Output: Speaker (mic)",
+typedef enum {
+    SettingOutput,
+    SettingOcarinaC,
+    SettingFold,
+    SettingCount,
+} SettingItem;
+
+static const char* const fold_ids[] = {"octave", "skip"};
+
+static const char* const output_labels[OcOutputCount] = {
+    [OcOutputN64] = "Output: N64 (NSO)",
+    [OcOutputSwitch2] = "Output: Switch 2",
+    [OcOutputSpeaker] = "Output: Speaker (mic)",
 };
 
-static const char* const layout_ids[OcLayoutCount] = {
-    [OcLayoutN64] = "n64",
-    [OcLayoutRemake] = "remake",
-    [OcLayoutSpeaker] = "speaker",
+static const char* const output_ids[OcOutputCount] = {
+    [OcOutputN64] = "n64",
+    [OcOutputSwitch2] = "remake",
+    [OcOutputSpeaker] = "speaker",
 };
 
 /* N64: the C button the ocarina is assigned to */
@@ -80,7 +89,7 @@ typedef enum {
     ActionNone,
     ActionExit,
     ActionPickFile,
-    ActionSkipPrompt,
+    ActionTakeControl,
     ActionAskOcarina,
     ActionFirstPlay,
     ActionOutputChanged,
@@ -104,12 +113,14 @@ typedef struct {
     DialogsApp* dialogs;
     bool usb_ok;
     uint32_t controlled_id; /* connection the Flipper took control on */
-    OcLayout layout;
+    OcOutput output;
     int ocarina_c; /* index into ocarina_c_buttons, -1 = ask */
+    bool fold;
 
     Screen screen;
     Screen player_back;
     int menu_index;
+    int settings_index;
     int book;
     int song_index;
 
@@ -153,8 +164,8 @@ static bool load_file(App* app, int channel) {
     bool ok = midi_load_file(storage, path, channel, &app->song, app->error);
     furi_record_close(RECORD_STORAGE);
 
-    if(ok) app->transpose = oc_best_transpose(&app->song, app->layout);
-    app->stats = oc_stats(&app->song, app->transpose, app->layout);
+    if(ok) app->transpose = oc_best_transpose(&app->song, app->output, app->fold);
+    app->stats = oc_stats(&app->song, app->transpose, app->output, app->fold);
     return ok;
 }
 
@@ -163,7 +174,7 @@ static void load_builtin(App* app, const OcSong* song) {
     app->builtin = true;
     app->channel = -1;
     if(!songs_build(song, &app->song)) furi_string_set(app->error, "Out of memory");
-    app->stats = oc_stats(&app->song, app->transpose, app->layout);
+    app->stats = oc_stats(&app->song, app->transpose, app->output, app->fold);
 }
 
 static int cycle_channel(const App* app, int dir) {
@@ -184,11 +195,61 @@ static void change_channel(App* app, int dir) {
     app->tempo_pct = tempo;
 }
 
+static bool is_midi_name(const char* name) {
+    size_t len = strlen(name);
+    return len > 4 && strcasecmp(name + len - 4, ".mid") == 0;
+}
+
+/* Next/previous .mid file in the current file's folder, alphabetically, wrapping */
+static void change_file(App* app, int dir) {
+    FuriString* folder = furi_string_alloc_set(app->path);
+    size_t slash = furi_string_search_rchar(folder, '/');
+    if(slash == FURI_STRING_FAILURE) {
+        furi_string_free(folder);
+        return;
+    }
+    const char* current = furi_string_get_cstr(app->path) + slash + 1;
+    furi_string_left(folder, slash);
+
+    char name[128];
+    FuriString* best = furi_string_alloc();
+    FuriString* wrap = furi_string_alloc();
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    File* d = storage_file_alloc(storage);
+    if(storage_dir_open(d, furi_string_get_cstr(folder))) {
+        FileInfo info;
+        while(storage_dir_read(d, &info, name, sizeof(name))) {
+            if((info.flags & FSF_DIRECTORY) || !is_midi_name(name)) continue;
+            int order = strcmp(name, current) * dir;
+            const char* b = furi_string_get_cstr(best);
+            const char* w = furi_string_get_cstr(wrap);
+            if(order > 0 && (furi_string_empty(best) || strcmp(name, b) * dir < 0))
+                furi_string_set(best, name);
+            if(furi_string_empty(wrap) || strcmp(name, w) * dir < 0) furi_string_set(wrap, name);
+        }
+    }
+    storage_dir_close(d);
+    storage_file_free(d);
+    furi_record_close(RECORD_STORAGE);
+
+    FuriString* pick = furi_string_empty(best) ? wrap : best;
+    if(!furi_string_empty(pick) && strcmp(furi_string_get_cstr(pick), current) != 0) {
+        int tempo = app->tempo_pct;
+        furi_string_printf(
+            app->path, "%s/%s", furi_string_get_cstr(folder), furi_string_get_cstr(pick));
+        load_file(app, -1);
+        app->tempo_pct = tempo;
+    }
+    furi_string_free(best);
+    furi_string_free(wrap);
+    furi_string_free(folder);
+}
+
 static void change_transpose(App* app, int delta) {
     int t = app->transpose + delta;
     if(t < -TRANSPOSE_LIMIT || t > TRANSPOSE_LIMIT) return;
     app->transpose = t;
-    app->stats = oc_stats(&app->song, t, app->layout);
+    app->stats = oc_stats(&app->song, t, app->output, app->fold);
 }
 
 static void change_tempo(App* app, int delta) {
@@ -227,7 +288,7 @@ static void save_setting(const char* path, const char* id) {
 
 /* The speaker output must not show up as a controller */
 static void update_usb(App* app) {
-    bool want = oc_uses_pad(app->layout);
+    bool want = oc_uses_pad(app->output);
     if(want == app->usb_ok) return;
     bool ok = want && hori_usb_start();
     if(!want) hori_usb_stop();
@@ -252,7 +313,7 @@ static void on_player_done(void* ctx) {
 
 static bool can_play(const App* app) {
     if(is_playing(app) || !furi_string_empty(app->error)) return false;
-    if(oc_uses_pad(app->layout) && !app->usb_ok) return false;
+    if(oc_uses_pad(app->output) && !app->usb_ok) return false;
     return app->stats.playable > 0;
 }
 
@@ -261,17 +322,18 @@ static void start_playback(App* app, bool take_out) {
     app->current_note = -1;
     HoriReport report;
     hori_report_neutral(&report);
-    if(app->layout == OcLayoutRemake) {
+    if(app->output == OcOutputSwitch2) {
         report.hat = HORI_HAT_LEFT;
     } else if(take_out && app->ocarina_c >= 0) {
         OcCombo item = {.button = ocarina_c_buttons[app->ocarina_c]};
-        oc_combo_report(&item, OcLayoutN64, &report);
+        oc_combo_report(&item, OcOutputN64, &report);
     }
     app->player = player_start(
         &app->song,
         app->transpose,
         app->tempo_pct,
-        app->layout,
+        app->output,
+        app->fold,
         take_out ? &report : NULL,
         on_player_note,
         on_player_done,
@@ -292,31 +354,44 @@ static void show_notice(App* app, const char* text) {
 
 typedef const char* (*ListLabel)(size_t index, const void* ctx);
 
-static bool skip_controller_prompt(App* app) {
-    if(app->layout != OcLayoutRemake) {
-        show_notice(app, "Switch 2 only");
-        return false;
+static int visible_menu(const App* app, MenuItem* items) {
+    int count = 0;
+    for(int i = 0; i < MenuCount; i++) {
+        if(i == MenuTakeControl && !oc_uses_pad(app->output)) continue;
+        items[count++] = (MenuItem)i;
     }
-    if(!app->usb_ok || !hori_usb_is_connected()) {
-        show_notice(app, "Not connected");
-        return false;
-    }
-    show_notice_for(app, "Wait...", 60000);
-    bool ok = player_skip_controller_prompt();
-    furi_mutex_acquire(app->mutex, FuriWaitForever);
-    if(ok) app->controlled_id = hori_usb_connection_id();
-    app->usb_ok = hori_usb_active();
-    furi_mutex_release(app->mutex);
-    show_notice(app, ok ? "Ready" : "Not connected");
-    return ok;
+    return count;
 }
 
-static const char* menu_label(size_t index, const void* ctx) {
+static const char* menu_label(size_t position, const void* ctx) {
+    MenuItem items[MenuCount];
+    visible_menu(ctx, items);
+    return menu_labels[items[position]];
+}
+
+static int visible_settings(const App* app, SettingItem* items) {
+    int count = 0;
+    for(int i = 0; i < SettingCount; i++) {
+        if(i == SettingOcarinaC && app->output != OcOutputN64) continue;
+        items[count++] = (SettingItem)i;
+    }
+    return count;
+}
+
+static const char* setting_label(size_t position, const void* ctx) {
     const App* app = ctx;
-    if(index == MenuLayout) return layout_labels[app->layout];
-    if(index == MenuOcarinaC)
+    SettingItem items[SettingCount];
+    visible_settings(app, items);
+    switch(items[position]) {
+    case SettingOutput:
+        return output_labels[app->output];
+    case SettingOcarinaC:
         return app->ocarina_c < 0 ? "Ocarina on: ask" : ocarina_c_labels[app->ocarina_c];
-    return menu_labels[index];
+    case SettingFold:
+        return app->fold ? "Out of range: Octave" : "Out of range: Skip";
+    default:
+        return "";
+    }
 }
 
 static const char* song_label(size_t index, const void* ctx) {
@@ -331,8 +406,8 @@ static const char* song_label(size_t index, const void* ctx) {
 #define ARROW_RIGHT "\x04"
 #define ICON_GAP    1
 
-static const char* const button_labels[OcLayoutCount][OcButtonCount] = {
-    [OcLayoutN64] =
+static const char* const button_labels[OcOutputCount][OcButtonCount] = {
+    [OcOutputN64] =
         {
             [OcA] = "A",
             [OcCDown] = "C" ARROW_DOWN,
@@ -340,7 +415,7 @@ static const char* const button_labels[OcLayoutCount][OcButtonCount] = {
             [OcCLeft] = "C" ARROW_LEFT,
             [OcCUp] = "C" ARROW_UP,
         },
-    [OcLayoutRemake] =
+    [OcOutputSwitch2] =
         {
             [OcA] = "L",
             [OcCDown] = "R",
@@ -351,7 +426,7 @@ static const char* const button_labels[OcLayoutCount][OcButtonCount] = {
 };
 
 static void combo_label(const App* app, const OcCombo* combo, char* out, size_t size) {
-    if(!oc_uses_pad(app->layout)) {
+    if(!oc_uses_pad(app->output)) {
         snprintf(out, size, "%s%d", oc_pitch_class_name(combo->pitch), combo->pitch / 12 - 1);
         return;
     }
@@ -359,7 +434,7 @@ static void combo_label(const App* app, const OcCombo* combo, char* out, size_t 
         out,
         size,
         "%s%s%s",
-        button_labels[app->layout][combo->button],
+        button_labels[app->output][combo->button],
         combo->mod > 0 ? "+R" : (combo->mod < 0 ? "+Z" : ""),
         combo->bend > 0 ? "+bend" ARROW_UP : (combo->bend < 0 ? "+bend" ARROW_DOWN : ""));
 }
@@ -406,7 +481,7 @@ static void draw_text(Canvas* canvas, int x, int y, const char* text) {
 static const char* status_label(const App* app) {
     if(app->notice && (int32_t)(app->notice_until - furi_get_tick()) > 0) return app->notice;
     if(app->screen == ScreenPlayer && is_playing(app)) return NULL;
-    if(!oc_uses_pad(app->layout)) return "Speaker";
+    if(!oc_uses_pad(app->output)) return "Speaker";
     if(!app->usb_ok) return "USB busy";
     return hori_usb_is_connected() ? "USB" : "--";
 }
@@ -456,20 +531,24 @@ static void draw_list(
 static void draw_error(Canvas* canvas, const App* app) {
     canvas_draw_str(canvas, 0, LINE_Y(1), "Error:");
     canvas_draw_str(canvas, 0, LINE_Y(2), furi_string_get_cstr(app->error));
-    if(app->song.channel_mask)
-        draw_text(canvas, 0, LINE_Y(4), "Hold " ARROW_UP ARROW_DOWN ": channel");
+    draw_text(
+        canvas,
+        0,
+        LINE_Y(4),
+        app->song.channel_mask ? ARROW_UP ARROW_DOWN " file  Hold " ARROW_LEFT ARROW_RIGHT " channel" :
+                                 ARROW_UP ARROW_DOWN " file");
     canvas_draw_str(canvas, 0, LINE_Y(5), "Back: menu");
 }
 
 static void draw_playing(Canvas* canvas, const App* app) {
     char line[48];
     if(app->current_note >= 0) {
-        int pitch = app->song.notes[app->current_note].pitch + app->transpose;
         OcCombo combo;
-        oc_map(pitch, app->layout, &combo);
+        oc_map(app->song.notes[app->current_note].pitch + app->transpose, app->output, app->fold, &combo);
+        int pitch = combo.pitch;
         char label[24];
         combo_label(app, &combo, label, sizeof(label));
-        if(oc_uses_pad(app->layout)) {
+        if(oc_uses_pad(app->output)) {
             snprintf(
                 line,
                 sizeof(line),
@@ -504,14 +583,14 @@ static void draw_builtin(Canvas* canvas, const App* app) {
     for(size_t i = 0; i < app->song.count && pos + 4 < sizeof(line); i++) {
         OcCombo combo;
         char label[24];
-        oc_map(app->song.notes[i].pitch, app->layout, &combo);
+        oc_map(app->song.notes[i].pitch, app->output, app->fold, &combo);
         combo_label(app, &combo, label, sizeof(label));
         pos += snprintf(line + pos, sizeof(line) - pos, "%s ", label);
     }
     draw_text(canvas, 0, LINE_Y(1), line);
     snprintf(line, sizeof(line), "Tempo %d%%", app->tempo_pct);
     canvas_draw_str(canvas, 0, LINE_Y(2), line);
-    if(app->layout == OcLayoutRemake) {
+    if(app->output == OcOutputSwitch2) {
         if(app->controlled_id == hori_usb_connection_id()) {
             canvas_draw_str(canvas, 0, LINE_Y(3), "Used the Joy-Cons?");
             canvas_draw_str(canvas, 0, LINE_Y(4), "Menu > Take control");
@@ -519,7 +598,8 @@ static void draw_builtin(Canvas* canvas, const App* app) {
             canvas_draw_str(canvas, 0, LINE_Y(4), "OK takes control first");
         }
     }
-    draw_text(canvas, 0, LINE_Y(5), "OK play  " ARROW_LEFT ARROW_RIGHT " tempo");
+    draw_text(
+        canvas, 0, LINE_Y(5), "OK play " ARROW_UP ARROW_DOWN " song " ARROW_LEFT ARROW_RIGHT " tempo");
 }
 
 static void draw_midi(Canvas* canvas, const App* app) {
@@ -527,9 +607,9 @@ static void draw_midi(Canvas* canvas, const App* app) {
     snprintf(
         line,
         sizeof(line),
-        "Notes %u  skip %u  bend %u",
+        "Notes %u  oct %u  bend %u",
         (unsigned)app->song.count,
-        (unsigned)app->stats.skipped,
+        (unsigned)app->stats.moved,
         (unsigned)app->stats.bent);
     canvas_draw_str(canvas, 0, LINE_Y(1), line);
 
@@ -543,8 +623,9 @@ static void draw_midi(Canvas* canvas, const App* app) {
     canvas_draw_str(canvas, 0, LINE_Y(3), line);
 
     draw_text(
-        canvas, 0, LINE_Y(4), "OK play " ARROW_UP ARROW_DOWN " key " ARROW_LEFT ARROW_RIGHT " tempo");
-    draw_text(canvas, 0, LINE_Y(5), "Hold " ARROW_UP ARROW_DOWN ": channel");
+        canvas, 0, LINE_Y(4), "OK play " ARROW_UP ARROW_DOWN " file " ARROW_LEFT ARROW_RIGHT " tempo");
+    draw_text(
+        canvas, 0, LINE_Y(5), "Hold " ARROW_UP ARROW_DOWN " key " ARROW_LEFT ARROW_RIGHT " channel");
 }
 
 static void draw_callback(Canvas* canvas, void* ctx) {
@@ -553,10 +634,18 @@ static void draw_callback(Canvas* canvas, void* ctx) {
     canvas_clear(canvas);
 
     switch(app->screen) {
-    case ScreenMenu:
+    case ScreenMenu: {
+        MenuItem items[MenuCount];
         draw_header(canvas, app, "Flipparina");
-        draw_list(canvas, menu_label, app, MenuCount, app->menu_index);
+        draw_list(canvas, menu_label, app, visible_menu(app, items), app->menu_index);
         break;
+    }
+    case ScreenSettings: {
+        SettingItem items[SettingCount];
+        draw_header(canvas, app, "Settings");
+        draw_list(canvas, setting_label, app, visible_settings(app, items), app->settings_index);
+        break;
+    }
     case ScreenSongs: {
         const SongBook* book = &song_books[app->book];
         draw_header(canvas, app, book->title);
@@ -600,34 +689,70 @@ static bool move_selection(const InputEvent* in, int* index, int count) {
 }
 
 static Action input_menu(App* app, const InputEvent* in) {
-    if(move_selection(in, &app->menu_index, MenuCount)) return ActionNone;
+    MenuItem items[MenuCount];
+    int count = visible_menu(app, items);
+    if(app->menu_index >= count) app->menu_index = count - 1;
+    if(move_selection(in, &app->menu_index, count)) return ActionNone;
     if(in->type != InputTypeShort) return ActionNone;
     if(in->key == InputKeyBack) return ActionExit;
-    if(app->menu_index == MenuLayout &&
-       (in->key == InputKeyOk || in->key == InputKeyLeft || in->key == InputKeyRight)) {
-        app->layout = (OcLayout)((app->layout + 1) % OcLayoutCount);
-        save_setting(LAYOUT_FILE, layout_ids[app->layout]);
-        return ActionOutputChanged;
-    }
-    if(app->menu_index == MenuOcarinaC &&
-       (in->key == InputKeyOk || in->key == InputKeyLeft || in->key == InputKeyRight)) {
-        app->ocarina_c = (app->ocarina_c + 1) % OCARINA_C_COUNT;
-        save_setting(OCARINA_C_FILE, ocarina_c_ids[app->ocarina_c]);
-        return ActionNone;
-    }
     if(in->key != InputKeyOk) return ActionNone;
 
-    switch((MenuItem)app->menu_index) {
-    case MenuMidiFile:
-        return ActionPickFile;
+    MenuItem item = items[app->menu_index];
+    switch(item) {
     case MenuOotSongs:
     case MenuMmSongs:
-        app->book = app->menu_index - MenuOotSongs;
+        app->book = item - MenuOotSongs;
         app->song_index = 0;
         app->screen = ScreenSongs;
         return ActionNone;
-    case MenuSkipPrompt:
-        return ActionSkipPrompt;
+    case MenuMidiFile:
+        return ActionPickFile;
+    case MenuTakeControl:
+        return ActionTakeControl;
+    case MenuSettings:
+        app->settings_index = 0;
+        app->screen = ScreenSettings;
+        return ActionNone;
+    default:
+        return ActionNone;
+    }
+}
+
+static int cycle(int value, int count, int dir) {
+    return (value + dir + count) % count;
+}
+
+static Action input_settings(App* app, const InputEvent* in) {
+    SettingItem items[SettingCount];
+    int count = visible_settings(app, items);
+    if(move_selection(in, &app->settings_index, count)) return ActionNone;
+    if(in->type != InputTypeShort) return ActionNone;
+    if(in->key == InputKeyBack) {
+        MenuItem menu[MenuCount];
+        int menu_count = visible_menu(app, menu);
+        for(int i = 0; i < menu_count; i++) {
+            if(menu[i] == MenuSettings) app->menu_index = i;
+        }
+        app->screen = ScreenMenu;
+        return ActionNone;
+    }
+    int dir = in->key == InputKeyLeft ? -1 : (in->key == InputKeyOk || in->key == InputKeyRight) ? 1 : 0;
+    if(!dir) return ActionNone;
+
+    switch(items[app->settings_index]) {
+    case SettingOutput:
+        app->output = (OcOutput)cycle(app->output, OcOutputCount, dir);
+        save_setting(OUTPUT_FILE, output_ids[app->output]);
+        return ActionOutputChanged;
+    case SettingOcarinaC:
+        app->ocarina_c = app->ocarina_c < 0 ? (dir > 0 ? 0 : OCARINA_C_COUNT - 1) :
+                                              cycle(app->ocarina_c, OCARINA_C_COUNT, dir);
+        save_setting(OCARINA_C_FILE, ocarina_c_ids[app->ocarina_c]);
+        return ActionNone;
+    case SettingFold:
+        app->fold = !app->fold;
+        save_setting(FOLD_FILE, fold_ids[app->fold ? 0 : 1]);
+        return ActionNone;
     default:
         return ActionNone;
     }
@@ -663,9 +788,9 @@ static Action input_player(App* app, const InputEvent* in) {
             return ActionNone;
         case InputKeyOk:
             if(!can_play(app)) return ActionNone;
-            if(app->layout == OcLayoutRemake && hori_usb_connection_id() != app->controlled_id)
+            if(app->output == OcOutputSwitch2 && hori_usb_connection_id() != app->controlled_id)
                 return ActionFirstPlay;
-            if(oc_uses_pad(app->layout)) return ActionAskOcarina;
+            if(oc_uses_pad(app->output)) return ActionAskOcarina;
             start_playback(app, false);
             return ActionNone;
         case InputKeyRight:
@@ -679,15 +804,25 @@ static Action input_player(App* app, const InputEvent* in) {
         }
     }
 
-    if(app->builtin) return ActionNone;
-    bool up = in->key == InputKeyUp;
-    bool down = in->key == InputKeyDown;
-    if(!up && !down) return ActionNone;
+    bool vertical = in->key == InputKeyUp || in->key == InputKeyDown;
+    int dir = (in->key == InputKeyDown || in->key == InputKeyRight) ? 1 : -1;
 
-    if(in->type == InputTypeLong && app->song.channel_mask) {
-        change_channel(app, up ? 1 : -1);
-    } else if(is_short && furi_string_empty(app->error)) {
-        change_transpose(app, up ? 1 : -1);
+    if(app->builtin) {
+        const SongBook* book = &song_books[app->book];
+        if(!vertical || !move_selection(in, &app->song_index, (int)book->count)) return ActionNone;
+        int tempo = app->tempo_pct;
+        load_builtin(app, &book->songs[app->song_index]);
+        app->tempo_pct = tempo;
+        return ActionNone;
+    }
+
+    bool held = in->type == InputTypeLong || in->type == InputTypeRepeat;
+    if(vertical && is_short) {
+        change_file(app, dir);
+    } else if(vertical && held && furi_string_empty(app->error)) {
+        change_transpose(app, -dir);
+    } else if(!vertical && in->type == InputTypeLong && app->song.channel_mask) {
+        change_channel(app, dir);
     }
     return ActionNone;
 }
@@ -696,12 +831,30 @@ static Action handle_input(App* app, const InputEvent* in) {
     switch(app->screen) {
     case ScreenMenu:
         return input_menu(app, in);
+    case ScreenSettings:
+        return input_settings(app, in);
     case ScreenSongs:
         return input_songs(app, in);
     case ScreenPlayer:
         return input_player(app, in);
     }
     return ActionNone;
+}
+
+static bool take_control(App* app) {
+    if(!oc_uses_pad(app->output)) return false;
+    if(!app->usb_ok || !hori_usb_is_connected()) {
+        show_notice(app, "Not connected");
+        return false;
+    }
+    show_notice_for(app, "Wait...", 60000);
+    bool ok = player_take_control();
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    if(ok) app->controlled_id = hori_usb_connection_id();
+    app->usb_ok = hori_usb_active();
+    furi_mutex_release(app->mutex);
+    show_notice(app, ok ? "Ready" : "Not connected");
+    return ok;
 }
 
 static void ask_ocarina(App* app) {
@@ -715,7 +868,7 @@ static void ask_ocarina(App* app) {
     dialog_message_free(msg);
     if(answer == DialogMessageButtonBack) return;
     bool take_out = answer == DialogMessageButtonLeft;
-    if(take_out && app->layout == OcLayoutN64 && app->ocarina_c < 0) {
+    if(take_out && app->output == OcOutputN64 && app->ocarina_c < 0) {
         msg = dialog_message_alloc();
         dialog_message_set_header(msg, "Ocarina on which C?", 64, 20, AlignCenter, AlignCenter);
         dialog_message_set_text(msg, "Change it in the menu", 64, 36, AlignCenter, AlignCenter);
@@ -788,8 +941,9 @@ static App* app_alloc(void) {
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     storage_simply_mkdir(storage, DATA_DIR);
-    app->layout = (OcLayout)load_setting(storage, LAYOUT_FILE, layout_ids, OcLayoutCount, 0);
+    app->output = (OcOutput)load_setting(storage, OUTPUT_FILE, output_ids, OcOutputCount, 0);
     app->ocarina_c = load_setting(storage, OCARINA_C_FILE, ocarina_c_ids, OCARINA_C_COUNT, -1);
+    app->fold = load_setting(storage, FOLD_FILE, fold_ids, 2, 1) == 0;
     furi_record_close(RECORD_STORAGE);
 
     app->view_port = view_port_alloc();
@@ -853,13 +1007,13 @@ int32_t flipparina_app(void* p) {
             pick_file(app);
             break;
         case ActionFirstPlay:
-            if(skip_controller_prompt(app)) ask_ocarina(app);
+            if(take_control(app)) ask_ocarina(app);
             break;
         case ActionAskOcarina:
             ask_ocarina(app);
             break;
-        case ActionSkipPrompt:
-            skip_controller_prompt(app);
+        case ActionTakeControl:
+            take_control(app);
             break;
         case ActionOutputChanged:
             update_usb(app);

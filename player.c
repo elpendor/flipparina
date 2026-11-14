@@ -14,7 +14,8 @@ struct Player {
     const MidiSong* song;
     int transpose;
     int tempo_pct;
-    OcLayout layout;
+    OcOutput output;
+    bool fold;
     bool take_out;
     HoriReport take_out_report;
     volatile bool stop;
@@ -40,9 +41,8 @@ static void take_out_ocarina(const HoriReport* press) {
     furi_delay_ms(OCARINA_OPEN_MS);
 }
 
-/* Replugging guarantees the Controllers screen: losing the active pad opens it,
-   and otherwise the first press of a new pad does */
-bool player_skip_controller_prompt(void) {
+/* Replugging always brings up the Controllers screen */
+bool player_take_control(void) {
     hori_usb_stop();
     furi_delay_ms(REPLUG_MS);
     if(!hori_usb_start()) return false;
@@ -56,9 +56,9 @@ bool player_skip_controller_prompt(void) {
     return true;
 }
 
-static void press(const OcCombo* combo, OcLayout layout, HoriReport* report) {
-    if(oc_uses_pad(layout)) {
-        oc_combo_report(combo, layout, report);
+static void press(const OcCombo* combo, OcOutput output, HoriReport* report) {
+    if(oc_uses_pad(output)) {
+        oc_combo_report(combo, output, report);
         hori_usb_set_report(report);
     } else {
         furi_hal_speaker_start(oc_pitch_hz(combo->pitch + 12 * SPEAKER_OCTAVE), SPEAKER_VOLUME);
@@ -76,14 +76,14 @@ static void release(bool pad, const HoriReport* neutral) {
 static int32_t player_thread(void* ctx) {
     Player* player = ctx;
     const MidiSong* song = player->song;
-    OcLayout layout = player->layout;
-    bool pad = oc_uses_pad(layout);
+    OcOutput output = player->output;
+    bool pad = oc_uses_pad(output);
     HoriReport neutral, report;
     hori_report_neutral(&neutral);
     hori_usb_set_report(&neutral);
 
     if(pad) {
-        if(layout == OcLayoutN64 && hori_usb_needs_wake())
+        if(output == OcOutputN64 && hori_usb_needs_wake())
             hori_usb_wake(WAKE_BUTTON, WAKE_HOLD_MS, WAKE_SETTLE_MS);
         if(player->take_out) take_out_ocarina(&player->take_out_report);
     } else if(!furi_hal_speaker_acquire(SPEAKER_ACQUIRE_MS)) {
@@ -92,11 +92,11 @@ static int32_t player_thread(void* ctx) {
     }
 
     OcCombo combo, next_combo = {0};
-    size_t i = oc_next_playable(song, 0, player->transpose, layout, &combo);
+    size_t i = oc_next_playable(song, 0, player->transpose, output, player->fold, &combo);
     uint32_t t0 = furi_get_tick();
 
     while(i < song->count) {
-        size_t next = oc_next_playable(song, i + 1, player->transpose, layout, &next_combo);
+        size_t next = oc_next_playable(song, i + 1, player->transpose, output, player->fold, &next_combo);
         OcNoteWindow window = oc_note_window(
             &song->notes[i],
             &combo,
@@ -105,7 +105,7 @@ static int32_t player_thread(void* ctx) {
             player->tempo_pct);
 
         if(!wait_until(player, t0 + window.press_ms)) break;
-        press(&combo, layout, &report);
+        press(&combo, output, &report);
         player->on_note((int32_t)i, player->ctx);
 
         if(window.release) {
@@ -128,7 +128,8 @@ Player* player_start(
     const MidiSong* song,
     int transpose,
     int tempo_pct,
-    OcLayout layout,
+    OcOutput output,
+    bool fold,
     const HoriReport* take_out,
     PlayerNoteCallback on_note,
     PlayerDoneCallback on_done,
@@ -138,7 +139,8 @@ Player* player_start(
         .song = song,
         .transpose = transpose,
         .tempo_pct = tempo_pct,
-        .layout = layout,
+        .output = output,
+        .fold = fold,
         .take_out = take_out != NULL,
         .on_note = on_note,
         .on_done = on_done,

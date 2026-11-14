@@ -5,6 +5,7 @@
 #include "config.h"
 
 #define SCORE_PER_SKIPPED 100000u
+#define SCORE_PER_MOVED   3000u
 #define SCORE_PER_BEND    1000u
 #define SCORE_NOT_OCTAVE  100u
 
@@ -39,15 +40,15 @@ static bool find_combo(int pitch, int8_t bend, bool mods, OcCombo* out) {
     return false;
 }
 
-bool oc_map(int pitch, OcLayout layout, OcCombo* out) {
-    if(layout == OcLayoutRemake) {
+static bool map_exact(int pitch, OcOutput output, OcCombo* out) {
+    if(output == OcOutputSwitch2) {
         static const int8_t bends[] = {0, BEND_SEMITONES, -BEND_SEMITONES, 1, -1};
         for(size_t i = 0; i < sizeof(bends); i++) {
             if(find_combo(pitch, bends[i], false, out)) return true;
         }
         return false;
     }
-    if(layout == OcLayoutSpeaker) {
+    if(output == OcOutputSpeaker) {
         *out = (OcCombo){.pitch = (uint8_t)pitch};
         return pitch >= SPEAKER_MIN_PITCH && pitch <= SPEAKER_MAX_PITCH;
     }
@@ -58,6 +59,16 @@ bool oc_map(int pitch, OcLayout layout, OcCombo* out) {
 #else
     return false;
 #endif
+}
+
+/* With fold, out-of-range notes move by octaves instead of being skipped */
+bool oc_map(int pitch, OcOutput output, bool fold, OcCombo* out) {
+    static const int8_t shifts[] = {0, 12, -12, 24, -24, 36, -36};
+    size_t tries = fold ? sizeof(shifts) : 1;
+    for(size_t i = 0; i < tries; i++) {
+        if(map_exact(pitch + shifts[i], output, out)) return true;
+    }
+    return false;
 }
 
 static void report_n64(const OcCombo* combo, HoriReport* report) {
@@ -92,39 +103,40 @@ static uint8_t bend_stick(int8_t bend) {
     return HORI_STICK_MID;
 }
 
-static const uint16_t remake_buttons[OcButtonCount] = {
-    [OcA] = MAP_REMAKE_D4,
-    [OcCDown] = MAP_REMAKE_F4,
-    [OcCRight] = MAP_REMAKE_A4,
-    [OcCLeft] = MAP_REMAKE_B4,
-    [OcCUp] = MAP_REMAKE_D5,
+static const uint16_t switch2_buttons[OcButtonCount] = {
+    [OcA] = MAP_SWITCH2_D4,
+    [OcCDown] = MAP_SWITCH2_F4,
+    [OcCRight] = MAP_SWITCH2_A4,
+    [OcCLeft] = MAP_SWITCH2_B4,
+    [OcCUp] = MAP_SWITCH2_D5,
 };
 
-void oc_combo_report(const OcCombo* combo, OcLayout layout, HoriReport* report) {
+void oc_combo_report(const OcCombo* combo, OcOutput output, HoriReport* report) {
     hori_report_neutral(report);
-    if(layout == OcLayoutRemake) {
-        report->buttons |= remake_buttons[combo->button];
+    if(output == OcOutputSwitch2) {
+        report->buttons |= switch2_buttons[combo->button];
     } else {
         report_n64(combo, report);
     }
     report->ly = bend_stick(combo->bend);
 }
 
-bool oc_uses_pad(OcLayout layout) {
-    return layout != OcLayoutSpeaker;
+bool oc_uses_pad(OcOutput output) {
+    return output != OcOutputSpeaker;
 }
 
 float oc_pitch_hz(int pitch) {
     return 440.0f * powf(2.0f, (float)(pitch - 69) / 12.0f);
 }
 
-OcStats oc_stats(const MidiSong* song, int transpose, OcLayout layout) {
+OcStats oc_stats(const MidiSong* song, int transpose, OcOutput output, bool fold) {
     OcStats stats = {0};
     for(size_t i = 0; i < song->count; i++) {
         OcCombo combo;
-        if(oc_map(song->notes[i].pitch + transpose, layout, &combo)) {
+        if(oc_map(song->notes[i].pitch + transpose, output, fold, &combo)) {
             stats.playable++;
             if(combo.bend) stats.bent++;
+            if(combo.pitch != song->notes[i].pitch + transpose) stats.moved++;
         } else {
             stats.skipped++;
         }
@@ -132,13 +144,14 @@ OcStats oc_stats(const MidiSong* song, int transpose, OcLayout layout) {
     return stats;
 }
 
-int oc_best_transpose(const MidiSong* song, OcLayout layout) {
+int oc_best_transpose(const MidiSong* song, OcOutput output, bool fold) {
     int best = 0;
     uint32_t best_score = UINT32_MAX;
     for(int t = -TRANSPOSE_SEARCH; t <= TRANSPOSE_SEARCH; t++) {
-        OcStats s = oc_stats(song, t, layout);
+        OcStats s = oc_stats(song, t, output, fold);
         uint32_t shift = (uint32_t)(t < 0 ? -t : t);
         uint32_t score = (uint32_t)s.skipped * SCORE_PER_SKIPPED +
+                         (uint32_t)s.moved * SCORE_PER_MOVED +
                          (uint32_t)s.bent * SCORE_PER_BEND +
                          ((shift % 12) ? SCORE_NOT_OCTAVE : 0u) + shift;
         if(score < best_score) {
@@ -153,9 +166,10 @@ size_t oc_next_playable(
     const MidiSong* song,
     size_t from,
     int transpose,
-    OcLayout layout,
+    OcOutput output,
+    bool fold,
     OcCombo* combo) {
-    while(from < song->count && !oc_map(song->notes[from].pitch + transpose, layout, combo))
+    while(from < song->count && !oc_map(song->notes[from].pitch + transpose, output, fold, combo))
         from++;
     return from;
 }
@@ -179,8 +193,7 @@ OcNoteWindow oc_note_window(
     if(next) {
         uint32_t next_start = scale_ms(next->start_ms, tempo_pct);
         uint32_t limit = next_start;
-        /* The game only starts a new note when the unbent pitch changes, and the
-           remake misses notes whose button and bend change at the same time */
+        /* Release first if the game would hear the same note, or if the stick moves too */
         if(next_combo->pitch - next_combo->bend == combo->pitch - combo->bend ||
            next_combo->bend != combo->bend) {
             limit = (next_start > w.press_ms + RETRIGGER_MS) ?

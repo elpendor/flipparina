@@ -1,4 +1,4 @@
-# Flipparina
+<h1 align="center"><img src="docs/logo.svg" alt="Flipparina" width="520"></h1>
 
 A Flipper Zero app that plays the ocarina in *Zelda: Ocarina of Time* and *Majora's Mask*. It either acts as a wired USB pad and presses the buttons for you, or plays the notes out loud for the Switch 2 version's microphone.
 
@@ -11,15 +11,15 @@ python -m ufbt launch   # build, install and run (exit the app first)
 
 ## Use
 
-1. Open **Apps → USB → Flipparina** and pick an **Output** (see below).
+1. Open **Apps → USB → Flipparina** and pick an **Output** in **Settings** (see below).
 2. For the pad outputs, plug the Flipper into the Switch.
-3. Take out the ocarina in game, pick a song and press OK.
+3. Pick a song and press OK. The Flipper asks whether the ocarina is out and takes it out for you if not.
 
-While the app is running, the Flipper's USB acts as a gamepad, so qFlipper can't connect.
+With a pad output, the Flipper's USB acts as a gamepad while the app runs, so qFlipper can't connect.
 
 ### Output modes
 
-Choose with the **Output** item on the main menu (OK or Left/Right switches it). The choice is remembered.
+Choose in **Settings > Output**. The choice is remembered.
 
 | Output | For | How it plays | Notes |
 |---|---|---|---|
@@ -30,22 +30,27 @@ Choose with the **Output** item on the main menu (OK or Left/Right switches it).
 ### Menu
 
 - **Ocarina of Time songs** / **Majora's Mask songs**: the built-in songs.
-- **Play MIDI file**: plays the melody of a `.mid` file from `SD:/apps_data/flipparina/`. Notes the current output can't play are skipped. `tools/ocarina_fit.py` moves a melody into the ocarina's range.
-- **Output**: see above.
-- **Ocarina on** (N64): which C button the ocarina is assigned to, so the Flipper can take it out. Asked the first time it's needed.
-- **Take control** (Switch 2): makes the Flipper the active controller. Runs by itself on the first play after connecting; use it again after using the Joy-Cons.
+- **MIDI files**: plays the melody of a `.mid` file from `SD:/apps_data/flipparina/`.
+- **Take control** (pad outputs): makes the Flipper the active controller. Use it after using the Joy-Cons. On Switch 2 it also runs by itself on the first play after connecting.
+- **Settings**:
+  - **Output**: see above.
+  - **Ocarina on** (N64): which C button the ocarina is assigned to, so the Flipper can take it out. Asked the first time it's needed.
+  - **Out of range**: notes outside the ocarina's range are left out (**Skip**, the default) or play an octave up or down (**Octave**).
+
+With several instruments in a MIDI file, hold Left/Right to pick the melody's channel.
 
 ### Player controls
 
 | Button | Action |
 |---|---|
 | OK | Play / stop |
+| Up / Down | Previous / next song (or MIDI file in the same folder) |
 | Left / Right | Tempo − / + |
-| Up / Down | Transpose |
-| Hold Up / Down | Change MIDI channel |
+| Hold Up / Down | Key − / + (MIDI files) |
+| Hold Left / Right | MIDI channel (MIDI files) |
 | Back | Back to the menu |
 
-## Settings
+## Advanced
 
 Button mapping, timing, stick bend and speaker pitch/volume are in `config.h`.
 
