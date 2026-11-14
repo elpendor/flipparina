@@ -17,6 +17,8 @@ python -m ufbt          # build
 python -m ufbt launch   # build, install and run (exit the app first)
 ```
 
+To release, run the **Build** workflow on GitHub (Actions → Build → Run workflow) and pick **patch**, **minor** or **major**. It tags the next version and attaches the `.fap` files.
+
 ## Use
 
 1. Open **Apps → USB → Flipparina** and pick an **Output** in **Settings** (see below).
