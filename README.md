@@ -2,6 +2,14 @@
 
 A Flipper Zero app that plays the ocarina in *Zelda: Ocarina of Time* and *Majora's Mask*. It either acts as a wired USB pad and presses the buttons for you, or plays the notes out loud for the Switch 2 version's microphone.
 
+## Install
+
+1. Download the `.fap` for your firmware from the [latest release](https://github.com/elpendor/flipparina/releases/latest): `flipparina-official-release.fap` for stock firmware, `flipparina-momentum-release.fap` for Momentum.
+2. Copy it to the Flipper's SD card as `apps/USB/flipparina.fap`, for example with qFlipper's file manager or the Flipper mobile app.
+3. Open **Apps → USB → Flipparina**.
+
+If the Flipper shows an "API mismatch" error, the file doesn't match your firmware version: update the firmware or build the app yourself (below).
+
 ## Build
 
 ```sh
