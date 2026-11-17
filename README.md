@@ -41,7 +41,9 @@ Choose in **Settings > Output**. The choice is remembered.
 |---|---|---|---|
 | **N64 (NSO)** | OoT / MM in the Nintendo Switch Online N64 app | USB pad: A and C-buttons (right stick) | R/Z (±1 semitone) and full stick bends (±2) cover every note from B3 to F5 |
 | **Switch 2** | Ocarina of Time on Switch 2 | USB pad: L, R, A, Y, X | Left stick bends (full tilt ±2, half tilt ±1) cover C4 to E5 |
-| **Speaker (mic)** | Ocarina of Time on Switch 2 | Flipper speaker, picked up by the console's microphone | No cable needed. Untested |
+| **Speaker (mic)** | Ocarina of Time on Switch 2 | Flipper speaker, picked up by the console's microphone | No cable needed. Tested, but the speaker is quiet and the console may miss notes |
+
+For the speaker, play in handheld mode and hold the back of the Flipper close to the microphone, the small hole on the top edge of the console towards the right. Keep the game volume low.
 
 ### Menu
 
@@ -68,7 +70,7 @@ With several instruments in a MIDI file, hold Left/Right to pick the melody's ch
 
 ## Advanced
 
-Button mapping, timing, stick bend and speaker pitch/volume are in `config.h`.
+Button mapping, timing, stick bend and speaker pitch/volume are in `config.h`. `SPEAKER_FULL_DUTY` plays the speaker at full pulse width, louder than the firmware allows by default; set it to 0 to use the firmware's limit.
 
 ## Credits
 

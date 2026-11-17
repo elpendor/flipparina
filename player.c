@@ -2,6 +2,7 @@
 
 #include <furi.h>
 #include <furi_hal_speaker.h>
+#include <stm32wbxx_ll_tim.h>
 
 #include "config.h"
 #include "ocarina.h"
@@ -62,6 +63,9 @@ static void press(const OcCombo* combo, OcOutput output, HoriReport* report) {
         hori_usb_set_report(report);
     } else {
         furi_hal_speaker_start(oc_pitch_hz(combo->pitch + 12 * SPEAKER_OCTAVE), SPEAKER_VOLUME);
+#if SPEAKER_FULL_DUTY
+        LL_TIM_OC_SetCompareCH1(TIM16, LL_TIM_GetAutoReload(TIM16) / 2);
+#endif
     }
 }
 
