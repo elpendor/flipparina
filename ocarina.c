@@ -21,10 +21,9 @@ const char* oc_pitch_class_name(int pitch) {
     return pitch_class_names[((pitch % 12) + 12) % 12];
 }
 
-static bool find_combo(int pitch, int8_t bend, bool mods, OcCombo* out) {
+static bool find_combo(int pitch, int8_t bend, OcCombo* out) {
     static const int8_t mod_values[] = {0, 1, -1};
-    size_t mod_count = mods ? sizeof(mod_values) : 1;
-    for(size_t m = 0; m < mod_count; m++) {
+    for(size_t m = 0; m < sizeof(mod_values); m++) {
         for(int b = 0; b < OcButtonCount; b++) {
             if(base_pitch[b] + mod_values[m] + bend == pitch) {
                 *out = (OcCombo){
@@ -41,24 +40,21 @@ static bool find_combo(int pitch, int8_t bend, bool mods, OcCombo* out) {
 }
 
 static bool map_exact(int pitch, OcOutput output, OcCombo* out) {
-    if(output == OcOutputSwitch2) {
-        static const int8_t bends[] = {0, BEND_SEMITONES, -BEND_SEMITONES, 1, -1};
-        for(size_t i = 0; i < sizeof(bends); i++) {
-            if(find_combo(pitch, bends[i], false, out)) return true;
-        }
-        return false;
-    }
     if(output == OcOutputSpeaker) {
         *out = (OcCombo){.pitch = (uint8_t)pitch};
         return pitch >= SPEAKER_MIN_PITCH && pitch <= SPEAKER_MAX_PITCH;
     }
-    if(find_combo(pitch, 0, true, out)) return true;
+    bool found = find_combo(pitch, 0, out);
 #if USE_STICK_BEND
-    return find_combo(pitch, BEND_SEMITONES, true, out) ||
-           find_combo(pitch, -BEND_SEMITONES, true, out);
-#else
-    return false;
+    found = found || find_combo(pitch, BEND_SEMITONES, out) ||
+            find_combo(pitch, -BEND_SEMITONES, out);
 #endif
+    /* Switch 2 does the ±1 with the D-pad instead of R/Z */
+    if(found && output == OcOutputSwitch2) {
+        out->pad = out->mod;
+        out->mod = 0;
+    }
+    return found;
 }
 
 /* With fold, out-of-range notes move by octaves instead of being skipped */
@@ -98,8 +94,6 @@ static void report_n64(const OcCombo* combo, HoriReport* report) {
 static uint8_t bend_stick(int8_t bend) {
     if(bend >= BEND_SEMITONES) return BEND_STICK_UP;
     if(bend <= -BEND_SEMITONES) return BEND_STICK_DOWN;
-    if(bend > 0) return BEND_HALF_UP;
-    if(bend < 0) return BEND_HALF_DOWN;
     return HORI_STICK_MID;
 }
 
@@ -115,6 +109,8 @@ void oc_combo_report(const OcCombo* combo, OcOutput output, HoriReport* report) 
     hori_report_neutral(report);
     if(output == OcOutputSwitch2) {
         report->buttons |= switch2_buttons[combo->button];
+        if(combo->pad > 0) report->hat = PAD_BEND_UP;
+        if(combo->pad < 0) report->hat = PAD_BEND_DOWN;
     } else {
         report_n64(combo, report);
     }
@@ -193,9 +189,10 @@ OcNoteWindow oc_note_window(
     if(next) {
         uint32_t next_start = scale_ms(next->start_ms, tempo_pct);
         uint32_t limit = next_start;
-        /* Release first if the game would hear the same note, or if the stick moves too */
-        if(next_combo->pitch - next_combo->bend == combo->pitch - combo->bend ||
-           next_combo->bend != combo->bend) {
+        /* Release first if the game would hear the same note, or if the stick or D-pad moves */
+        if(next_combo->pitch - next_combo->bend - next_combo->pad ==
+               combo->pitch - combo->bend - combo->pad ||
+           next_combo->bend != combo->bend || next_combo->pad != combo->pad) {
             limit = (next_start > w.press_ms + RETRIGGER_MS) ?
                         next_start - RETRIGGER_MS :
                         w.press_ms + (next_start - w.press_ms) / 2;

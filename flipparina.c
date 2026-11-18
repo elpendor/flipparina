@@ -433,9 +433,10 @@ static void combo_label(const App* app, const OcCombo* combo, char* out, size_t 
     snprintf(
         out,
         size,
-        "%s%s%s",
+        "%s%s%s%s",
         button_labels[app->output][combo->button],
         combo->mod > 0 ? "+R" : (combo->mod < 0 ? "+Z" : ""),
+        combo->pad > 0 ? "+pad" ARROW_UP : (combo->pad < 0 ? "+pad" ARROW_DOWN : ""),
         combo->bend > 0 ? "+bend" ARROW_UP : (combo->bend < 0 ? "+bend" ARROW_DOWN : ""));
 }
 

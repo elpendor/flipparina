@@ -18,6 +18,8 @@
 #define HORI_BTN_HOME    0x1000
 #define HORI_BTN_CAPTURE 0x2000
 
+#define HORI_HAT_UP     0x00
+#define HORI_HAT_DOWN   0x04
 #define HORI_HAT_LEFT   0x06
 #define HORI_HAT_CENTER 0x08
 #define HORI_STICK_MIN  0x00

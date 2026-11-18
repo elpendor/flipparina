@@ -40,7 +40,7 @@ Choose in **Settings > Output**. The choice is remembered.
 | Output | For | How it plays | Notes |
 |---|---|---|---|
 | **N64 (NSO)** | OoT / MM in the Nintendo Switch Online N64 app | USB pad: A and C-buttons (right stick) | R/Z (±1 semitone) and full stick bends (±2) cover every note from B3 to F5 |
-| **Switch 2** | Ocarina of Time on Switch 2 | USB pad: L, R, A, Y, X | Left stick bends (full tilt ±2, half tilt ±1) cover C4 to E5 |
+| **Switch 2** | Ocarina of Time on Switch 2 | USB pad: L, R, A, Y, X | D-pad up/down (±1) and full left stick bends (±2) cover every note from B3 to F5 |
 | **Speaker (mic)** | Ocarina of Time on Switch 2 | Flipper speaker, picked up by the console's microphone | No cable needed. Tested, but the speaker is quiet and the console may miss notes |
 
 For the speaker, play in handheld mode and hold the back of the Flipper close to the microphone, the small hole on the top edge of the console towards the right. Keep the game volume low.

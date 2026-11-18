@@ -23,6 +23,7 @@ typedef struct {
     uint8_t pitch;
     OcButton button;
     int8_t mod;
+    int8_t pad;
     int8_t bend;
 } OcCombo;
 

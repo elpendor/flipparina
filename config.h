@@ -26,9 +26,9 @@
 #define BEND_SEMITONES  2
 #define USE_STICK_BEND  1
 
-/* Switch 2: half tilt bends 1 semitone */
-#define BEND_HALF_UP   0x40
-#define BEND_HALF_DOWN 0xC0
+/* Switch 2: D-pad up/down bends 1 semitone, like R/Z on N64 */
+#define PAD_BEND_UP   HORI_HAT_UP
+#define PAD_BEND_DOWN HORI_HAT_DOWN
 
 /* OoT runs at 20 fps */
 #define MIN_NOTE_MS  70
