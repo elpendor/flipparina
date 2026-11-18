@@ -3,7 +3,7 @@
 - Switch 2 output bends semitones with D-pad up/down instead of a half stick tilt, reaching B3 to F5 instead of C4 to E5.
 - MIDI files with fewer than 16 notes no longer fail with "Out of memory".
 - MIDI modulation (CC1) plays as vibrato, by tilting the stick sideways.
-- Test melodies: `tools/make_bends_sample.py` (B3 to F5) and `tools/make_vibrato_sample.py` (the same with vibrato); `tools/add_vibrato.py` adds vibrato to a MIDI file's long notes.
+- `tools/make_test_midi.py` also writes `chromatic_vibrato.mid`; `tools/add_vibrato.py` adds vibrato to a MIDI file's long notes.
 
 ## 1.0.0
 

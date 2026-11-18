@@ -1,4 +1,4 @@
-"""Write chromatic.mid and repeats.mid test files."""
+"""Write chromatic.mid, chromatic_vibrato.mid and repeats.mid test files."""
 import struct
 import sys
 from pathlib import Path
@@ -20,8 +20,10 @@ def ms_to_ticks(ms: float) -> int:
     return round(ms * 1000 * TPQ / TEMPO)
 
 
-def write_midi(path: Path, notes):
+def write_midi(path: Path, notes, vibrato=0):
     events = []
+    if vibrato:
+        events.append((0, 0, bytes([0xB0, 1, vibrato])))
     for pitch, on, off in notes:
         events.append((ms_to_ticks(on), 1, bytes([0x90, pitch, 100])))
         events.append((ms_to_ticks(off), 0, bytes([0x80, pitch, 0])))
@@ -45,6 +47,7 @@ def main():
 
     chromatic = [(p, i * 700, i * 700 + 600) for i, p in enumerate(range(59, 78))]
     write_midi(out / "chromatic.mid", chromatic)
+    write_midi(out / "chromatic_vibrato.mid", chromatic, vibrato=96)
 
     repeats, t = [], 0
     for length in (400, 300, 200, 150, 100, 75):
