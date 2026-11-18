@@ -48,7 +48,7 @@ For the speaker, play in handheld mode and hold the back of the Flipper close to
 ### Menu
 
 - **Ocarina of Time songs** / **Majora's Mask songs**: the built-in songs.
-- **MIDI files**: plays the melody of a `.mid` file from `SD:/apps_data/flipparina/`. Modulation (CC1) plays as vibrato by tilting the stick sideways.
+- **MIDI files**: plays the melody of a `.mid` file from `SD:/apps_data/flipparina/`. With a pad output, modulation (CC1) plays as vibrato by tilting the stick sideways.
 - **Take control** (pad outputs): makes the Flipper the active controller. Use it after using the Joy-Cons. On Switch 2 it also runs by itself on the first play after connecting.
 - **Settings**:
   - **Output**: see above.
@@ -70,7 +70,9 @@ With several instruments in a MIDI file, hold Left/Right to pick the melody's ch
 
 ## Advanced
 
-Button mapping, timing, stick bend and speaker pitch/volume are in `config.h`. `SPEAKER_FULL_DUTY` plays the speaker at full pulse width, louder than the firmware allows by default; set it to 0 to use the firmware's limit.
+Button mapping, timing, pitch bends, vibrato depth and speaker pitch/volume are in `config.h`. `SPEAKER_FULL_DUTY` plays the speaker at full pulse width, louder than the firmware allows by default; set it to 0 to use the firmware's limit.
+
+`tools/make_test_midi.py` writes the test files in `test_midi/` (the full B3 to F5 range, with and without vibrato, and fast repeated notes). `tools/add_vibrato.py` adds vibrato to the long notes of any MIDI file.
 
 ## Credits
 
