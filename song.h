@@ -9,6 +9,7 @@ typedef struct {
     uint32_t start_ms;
     uint16_t dur_ms;
     uint8_t pitch;
+    uint8_t vibrato; /* MIDI modulation (CC1), 0-127 */
 } MidiNote;
 
 typedef struct {

@@ -12,6 +12,7 @@ typedef struct {
     uint32_t start_tick;
     uint16_t dur_ticks;
     uint8_t pitch;
+    uint8_t vibrato;
 } TickNote;
 
 typedef union {
@@ -93,9 +94,12 @@ typedef struct {
     uint32_t tempo_uspq[MAX_TEMPOS];
     size_t tempo_count;
     uint16_t channel_mask;
+    uint8_t modulation[16];
+    /* Highest modulation seen while each active note sounds */
+    uint8_t active_vibrato[16 * 128];
 } Parser;
 
-static void emit_note(Parser* p, uint32_t start, uint32_t end, uint8_t pitch) {
+static void emit_note(Parser* p, uint32_t start, uint32_t end, uint8_t pitch, uint8_t vibrato) {
     if(end <= start) return;
     if(p->notes && p->count < p->capacity) {
         uint32_t dur = end - start;
@@ -103,6 +107,7 @@ static void emit_note(Parser* p, uint32_t start, uint32_t end, uint8_t pitch) {
             .start_tick = start,
             .dur_ticks = (uint16_t)(dur > 0xFFFF ? 0xFFFF : dur),
             .pitch = pitch,
+            .vibrato = vibrato,
         };
     }
     p->count++;
@@ -111,6 +116,7 @@ static void emit_note(Parser* p, uint32_t start, uint32_t end, uint8_t pitch) {
 static void parse_track(Reader* r, uint32_t end, Parser* p) {
     for(size_t i = 0; i < 16 * 128; i++)
         p->active[i] = NO_NOTE;
+    memset(p->modulation, 0, sizeof(p->modulation));
 
     uint32_t tick = 0;
     uint8_t running = 0;
@@ -165,6 +171,14 @@ static void parse_track(Reader* r, uint32_t end, Parser* p) {
         }
 
         if(ch == DRUM_CHANNEL) continue;
+        if(status == 0xB0 && d1 == 1) {
+            p->modulation[ch] = d2 & 0x7F;
+            for(size_t k = (size_t)ch * 128; k < (size_t)ch * 128 + 128; k++) {
+                if(p->active[k] != NO_NOTE && p->active_vibrato[k] < p->modulation[ch])
+                    p->active_vibrato[k] = p->modulation[ch];
+            }
+            continue;
+        }
         bool on = (status == 0x90 && d2 > 0);
         bool off = (status == 0x80) || (status == 0x90 && d2 == 0);
         if(!on && !off) continue;
@@ -175,10 +189,13 @@ static void parse_track(Reader* r, uint32_t end, Parser* p) {
 
         size_t idx = (size_t)ch * 128 + pitch;
         if(p->active[idx] != NO_NOTE) {
-            emit_note(p, p->active[idx], tick, pitch);
+            emit_note(p, p->active[idx], tick, pitch, p->active_vibrato[idx]);
             p->active[idx] = NO_NOTE;
         }
-        if(on) p->active[idx] = tick;
+        if(on) {
+            p->active[idx] = tick;
+            p->active_vibrato[idx] = p->modulation[ch];
+        }
     }
 }
 
@@ -369,6 +386,7 @@ bool midi_load_file(
                 .start_ms = start_ms,
                 .dur_ms = (uint16_t)(dur_ms > 0xFFFF ? 0xFFFF : dur_ms),
                 .pitch = t.pitch,
+                .vibrato = t.vibrato,
             };
         }
         uint32_t offset = a[0].ms.start_ms;

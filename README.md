@@ -48,7 +48,7 @@ For the speaker, play in handheld mode and hold the back of the Flipper close to
 ### Menu
 
 - **Ocarina of Time songs** / **Majora's Mask songs**: the built-in songs.
-- **MIDI files**: plays the melody of a `.mid` file from `SD:/apps_data/flipparina/`.
+- **MIDI files**: plays the melody of a `.mid` file from `SD:/apps_data/flipparina/`. Modulation (CC1) plays as vibrato by tilting the stick sideways.
 - **Take control** (pad outputs): makes the Flipper the active controller. Use it after using the Joy-Cons. On Switch 2 it also runs by itself on the first play after connecting.
 - **Settings**:
   - **Output**: see above.

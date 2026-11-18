@@ -553,10 +553,11 @@ static void draw_playing(Canvas* canvas, const App* app) {
             snprintf(
                 line,
                 sizeof(line),
-                "%s%d  %s",
+                "%s%d  %s%s",
                 oc_pitch_class_name(pitch),
                 pitch / 12 - 1,
-                label);
+                label,
+                app->song.notes[app->current_note].vibrato ? " ~" : "");
         } else {
             snprintf(line, sizeof(line), "%s", label);
         }

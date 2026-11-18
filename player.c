@@ -57,9 +57,11 @@ bool player_take_control(void) {
     return true;
 }
 
-static void press(const OcCombo* combo, OcOutput output, HoriReport* report) {
+static void press(const OcCombo* combo, uint8_t vibrato, OcOutput output, HoriReport* report) {
     if(oc_uses_pad(output)) {
         oc_combo_report(combo, output, report);
+        /* A sideways stick tilt adds vibrato; how far sets the depth */
+        report->lx = HORI_STICK_MID + vibrato * VIBRATO_MAX_TILT / 127;
         hori_usb_set_report(report);
     } else {
         furi_hal_speaker_start(oc_pitch_hz(combo->pitch + 12 * SPEAKER_OCTAVE), SPEAKER_VOLUME);
@@ -109,7 +111,7 @@ static int32_t player_thread(void* ctx) {
             player->tempo_pct);
 
         if(!wait_until(player, t0 + window.press_ms)) break;
-        press(&combo, output, &report);
+        press(&combo, song->notes[i].vibrato, output, &report);
         player->on_note((int32_t)i, player->ctx);
 
         if(window.release) {

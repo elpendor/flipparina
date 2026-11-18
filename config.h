@@ -26,6 +26,9 @@
 #define BEND_SEMITONES  2
 #define USE_STICK_BEND  1
 
+/* Vibrato: stick tilt right at full MIDI modulation (CC1 = 127) */
+#define VIBRATO_MAX_TILT 0x7F
+
 /* Switch 2: D-pad up/down bends 1 semitone, like R/Z on N64 */
 #define PAD_BEND_UP   HORI_HAT_UP
 #define PAD_BEND_DOWN HORI_HAT_DOWN
