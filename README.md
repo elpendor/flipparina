@@ -23,7 +23,7 @@ python -m ufbt          # build
 python -m ufbt launch   # build, install and run (exit the app first)
 ```
 
-To release, run the **Build** workflow on GitHub (Actions → Build → Run workflow) and pick **patch**, **minor** or **major**. It tags the next version and attaches the `.fap` files.
+To release, add the new version as the top heading of `docs/changelog.md` (e.g. `## 1.1.0`) with its notes, then run the **Build** workflow on GitHub (Actions → Build → Run workflow) with **release** ticked. It tags that version, attaches the `.fap` files and uses the notes as the release text.
 
 ## Use
 
