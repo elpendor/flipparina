@@ -323,7 +323,8 @@ bool midi_load_file(
         size_t max_block = memmgr_heap_get_max_free_block();
         size_t fit = max_block > RAM_RESERVE ? (max_block - RAM_RESERVE) / sizeof(NoteSlot) : 0;
         p->capacity = want < fit ? want : fit;
-        if(p->capacity < 16) {
+        /* Short files are fine; only fail when RAM truncates a song to almost nothing */
+        if(p->capacity < want && p->capacity < 16) {
             furi_string_set(error, "Out of memory");
             break;
         }

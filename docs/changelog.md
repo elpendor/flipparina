@@ -1,6 +1,7 @@
 ## 1.1.0
 
 - Switch 2 output bends semitones with D-pad up/down instead of a half stick tilt, reaching B3 to F5 instead of C4 to E5.
+- MIDI files with fewer than 16 notes no longer fail with "Out of memory".
 - `tools/make_bends_sample.py` writes a chromatic B3 to F5 test melody.
 
 ## 1.0.0
