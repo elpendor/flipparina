@@ -58,7 +58,7 @@ For the speaker, play in handheld mode and hold the back of the Flipper close to
   - **Output**: see above.
   - **Ocarina on** (N64): which C button the ocarina is assigned to, so the Flipper can take it out. Asked the first time it's needed.
   - **Out of range**: notes outside the ocarina's range are left out (**Skip**, the default) or play an octave up or down (**Octave**).
-  - **Harmony delay** (pad outputs): how long the Flipper holds back the harmony so it lines up with the game's ocarina. Default 100 ms. Also in the MIDI player while a harmony is on.
+  - **Harmony delay** (pad outputs): how long the Flipper holds back the harmony so it lines up with the game's ocarina. N64 (NSO) and Switch 2 each keep their own: 380 ms and 100 ms by default, since NSO lags far more. Also in the MIDI player while a harmony is on.
 
 ### Harmony
 

@@ -1,3 +1,7 @@
+## 1.2.1
+
+- N64 (NSO) and Switch 2 each keep their own harmony delay, since NSO lags far more. N64 starts at 380 ms; Switch 2 keeps the delay set in 1.2.0.
+
 ## 1.2.0
 
 - Harmony: with a pad output, the Flipper's speaker plays a second MIDI channel along with the game's ocarina. Pick it in the player's Harmony row.

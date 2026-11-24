@@ -21,8 +21,10 @@
 #define SPEAKER_MAX_PITCH 96
 
 /* Harmony on the speaker (pad outputs): default delay so it lines up with the game's ocarina,
-   which sounds after the button press. Change it in Settings. */
-#define HARMONY_DELAY_MS      100
+   which sounds after the button press. Tuned by ear; NSO's emulator adds a lot of lag.
+   Change it in Settings or the player's Delay row. */
+#define HARMONY_DELAY_MS         100 /* Switch 2 */
+#define HARMONY_DELAY_N64_MS     380 /* NSO */
 #define HARMONY_DELAY_STEP_MS 10
 #define HARMONY_DELAY_MAX_MS  500
 

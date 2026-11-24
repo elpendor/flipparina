@@ -19,7 +19,15 @@
 #define OUTPUT_FILE DATA_DIR "/layout.txt"
 #define OCARINA_C_FILE DATA_DIR "/ocarina_c.txt"
 #define FOLD_FILE      DATA_DIR "/out_of_range.txt"
-#define HARMONY_DELAY_FILE DATA_DIR "/harmony_delay.txt"
+/* Before 1.2.1 one delay served both pad outputs; it now seeds Switch 2 */
+#define HARMONY_DELAY_OLD_FILE DATA_DIR "/harmony_delay.txt"
+
+/* Each pad output lags differently (NSO emulates the N64), so each keeps its own delay */
+static const char* const harmony_delay_files[OcOutputCount] = {
+    [OcOutputN64] = DATA_DIR "/harmony_delay_n64.txt",
+    [OcOutputSwitch2] = DATA_DIR "/harmony_delay_switch2.txt",
+    [OcOutputSpeaker] = NULL,
+};
 
 #define SCREEN_W      128
 #define HEADER_Y      10
@@ -129,7 +137,7 @@ typedef struct {
     OcOutput output;
     int ocarina_c; /* index into ocarina_c_buttons, -1 = ask */
     bool fold;
-    int harmony_delay_ms;
+    int harmony_delay_ms[OcOutputCount];
 
     Screen screen;
     Screen player_back;
@@ -310,7 +318,7 @@ static void row_value(const App* app, PlayerRow row, char* out, size_t size) {
         }
         break;
     case RowDelay:
-        snprintf(out, size, "%d ms", app->harmony_delay_ms);
+        snprintf(out, size, "%d ms", app->harmony_delay_ms[app->output]);
         break;
     case RowKey:
         /* The key decides which notes fit, so the skipped count lives here */
@@ -339,12 +347,14 @@ static void change_transpose(App* app, int delta) {
 static void save_setting(const char* path, const char* id);
 
 static void change_delay(App* app, int dir) {
-    int d = app->harmony_delay_ms + dir * HARMONY_DELAY_STEP_MS;
+    const char* path = harmony_delay_files[app->output];
+    if(!path) return;
+    int d = app->harmony_delay_ms[app->output] + dir * HARMONY_DELAY_STEP_MS;
     if(d < 0 || d > HARMONY_DELAY_MAX_MS) return;
-    app->harmony_delay_ms = d;
+    app->harmony_delay_ms[app->output] = d;
     char id[12];
     snprintf(id, sizeof(id), "%d", d);
-    save_setting(HARMONY_DELAY_FILE, id);
+    save_setting(path, id);
 }
 
 static void change_tempo(App* app, int delta) {
@@ -371,16 +381,16 @@ static int load_setting(
     return value;
 }
 
-static int load_delay(Storage* storage) {
-    int value = HARMONY_DELAY_MS;
+static int load_delay(Storage* storage, const char* path, int fallback) {
+    int value = fallback;
     char text[12] = {0};
     File* file = storage_file_alloc(storage);
-    if(storage_file_open(file, HARMONY_DELAY_FILE, FSAM_READ, FSOM_OPEN_EXISTING) &&
+    if(storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING) &&
        storage_file_read(file, text, sizeof(text) - 1) > 0) {
         value = atoi(text);
     }
     storage_file_free(file);
-    if(value < 0 || value > HARMONY_DELAY_MAX_MS) value = HARMONY_DELAY_MS;
+    if(value < 0 || value > HARMONY_DELAY_MAX_MS) value = fallback;
     return value;
 }
 
@@ -444,7 +454,7 @@ static void start_playback(App* app, bool take_out) {
         app->fold,
         take_out ? &report : NULL,
         app->harmony_channel >= 0 ? &app->harmony : NULL,
-        (uint32_t)app->harmony_delay_ms,
+        (uint32_t)app->harmony_delay_ms[app->output],
         on_player_note,
         on_player_done,
         app);
@@ -518,7 +528,7 @@ static void setting_value(size_t position, const void* ctx, char* out, size_t si
         snprintf(out, size, "%s", app->fold ? "Octave" : "Skip");
         break;
     case SettingHarmonyDelay:
-        snprintf(out, size, "%d ms", app->harmony_delay_ms);
+        snprintf(out, size, "%d ms", app->harmony_delay_ms[app->output]);
         break;
     default:
         out[0] = '\0';
@@ -1157,7 +1167,12 @@ static App* app_alloc(void) {
     app->output = (OcOutput)load_setting(storage, OUTPUT_FILE, output_ids, OcOutputCount, 0);
     app->ocarina_c = load_setting(storage, OCARINA_C_FILE, ocarina_c_ids, OCARINA_C_COUNT, -1);
     app->fold = load_setting(storage, FOLD_FILE, fold_ids, 2, 1) == 0;
-    app->harmony_delay_ms = load_delay(storage);
+    /* The 1.2.0 shared delay carries over to Switch 2 only: NSO needs far more */
+    int old_delay = load_delay(storage, HARMONY_DELAY_OLD_FILE, HARMONY_DELAY_MS);
+    app->harmony_delay_ms[OcOutputSwitch2] =
+        load_delay(storage, harmony_delay_files[OcOutputSwitch2], old_delay);
+    app->harmony_delay_ms[OcOutputN64] =
+        load_delay(storage, harmony_delay_files[OcOutputN64], HARMONY_DELAY_N64_MS);
     furi_record_close(RECORD_STORAGE);
 
     app->view_port = view_port_alloc();
