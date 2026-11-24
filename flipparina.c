@@ -110,6 +110,7 @@ static const char* const row_labels[RowCount] = {"Melody", "Harmony", "Delay", "
 typedef enum {
     EvInput,
     EvPlayerDone,
+    EvExit,
 } EventType;
 
 typedef struct {
@@ -155,6 +156,7 @@ typedef struct {
     Player* player;
     int32_t current_note;
 
+    volatile bool in_dialog; /* the main loop is blocked in a system dialog */
     const char* notice;
     uint32_t notice_until;
 } App;
@@ -1067,7 +1069,9 @@ static void ask_ocarina(App* app) {
     dialog_message_set_text(msg, "No: Flipper takes it out", 64, 36, AlignCenter, AlignCenter);
     dialog_message_set_buttons(msg, "No", NULL, "Yes");
     view_port_enabled_set(app->view_port, false);
+    app->in_dialog = true;
     DialogMessageButton answer = dialog_message_show(app->dialogs, msg);
+    app->in_dialog = false;
     view_port_enabled_set(app->view_port, true);
     dialog_message_free(msg);
     if(answer == DialogMessageButtonBack) return;
@@ -1078,7 +1082,9 @@ static void ask_ocarina(App* app) {
         dialog_message_set_text(msg, "Change it in the menu", 64, 36, AlignCenter, AlignCenter);
         dialog_message_set_buttons(msg, "Left", "Down", "Right");
         view_port_enabled_set(app->view_port, false);
+        app->in_dialog = true;
         answer = dialog_message_show(app->dialogs, msg);
+        app->in_dialog = false;
         view_port_enabled_set(app->view_port, true);
         dialog_message_free(msg);
         if(answer == DialogMessageButtonBack) return;
@@ -1103,7 +1109,9 @@ static void pick_file(App* app) {
     FuriString* picked = furi_string_alloc();
 
     view_port_enabled_set(app->view_port, false);
+    app->in_dialog = true;
     bool ok = dialog_file_browser_show(app->dialogs, picked, start, &opts);
+    app->in_dialog = false;
     view_port_enabled_set(app->view_port, true);
     furi_string_free(start);
 
@@ -1180,9 +1188,20 @@ static void app_free(App* app) {
     free(app);
 }
 
+/* `loader close` (used by ufbt launch) asks the app to exit. A system dialog blocks the
+   main loop until it closes, so refuse then and let the loader say to close it by hand. */
+static bool on_signal(uint32_t signal, void* arg, void* context) {
+    UNUSED(arg);
+    App* app = context;
+    if(signal != FuriSignalExit || app->in_dialog) return false;
+    AppEvent ev = {.type = EvExit};
+    return furi_message_queue_put(app->queue, &ev, 0) == FuriStatusOk;
+}
+
 int32_t flipparina_app(void* p) {
     UNUSED(p);
     App* app = app_alloc();
+    furi_thread_set_signal_callback(furi_thread_get_current(), on_signal, app);
 
     bool running = true;
     uint32_t last_redraw = 0;
@@ -1197,7 +1216,11 @@ int32_t flipparina_app(void* p) {
         }
 
         Action action = ActionNone;
-        if(ev.type == EvPlayerDone) {
+        if(ev.type == EvExit) {
+            if(app->player) player_request_stop(app->player);
+            finish_playback(app);
+            running = false;
+        } else if(ev.type == EvPlayerDone) {
             finish_playback(app);
         } else {
             furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -1230,6 +1253,7 @@ int32_t flipparina_app(void* p) {
         view_port_update(app->view_port);
     }
 
+    furi_thread_set_signal_callback(furi_thread_get_current(), NULL, NULL);
     app_free(app);
     return 0;
 }
