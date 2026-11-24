@@ -1,8 +1,10 @@
 <h1 align="center"><img src="docs/logo.svg" alt="Flipparina" width="520"></h1>
 
-https://github.com/user-attachments/assets/88779389-a934-4347-a2df-32ffa27cfebd
-
 A Flipper Zero app that plays the ocarina in *Zelda: Ocarina of Time* and *Majora's Mask*. It either acts as a wired USB pad and presses the buttons for you, or plays the notes out loud for the Switch 2 version's microphone.
+
+## Demo
+
+https://github.com/user-attachments/assets/88779389-a934-4347-a2df-32ffa27cfebd
 
 <p align="center">
   <img src="screenshots/ss0.png" alt="Main menu" width="256">
