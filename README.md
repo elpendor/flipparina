@@ -54,25 +54,30 @@ For the speaker, play in handheld mode and hold the back of the Flipper close to
   - **Output**: see above.
   - **Ocarina on** (N64): which C button the ocarina is assigned to, so the Flipper can take it out. Asked the first time it's needed.
   - **Out of range**: notes outside the ocarina's range are left out (**Skip**, the default) or play an octave up or down (**Octave**).
+  - **Harmony delay** (pad outputs): how long the Flipper holds back the harmony so it lines up with the game's ocarina. Default 100 ms. Also in the MIDI player while a harmony is on.
 
-With several instruments in a MIDI file, hold Left/Right to pick the melody's channel.
+### Harmony
+
+With a pad output, the Flipper's speaker is free while the console plays the ocarina, so it can play a second part along with it. Pick the harmony's channel (or **off**) in the MIDI player's **Harmony** row. A file with exactly two channels starts with the first as the melody and the second as the harmony. The harmony keeps the file's own timing, follows the key and tempo, and plays one note at a time.
+
+The game sounds a note a little after the button press, so the harmony is delayed to match. To tune it, play `test_midi/harmony_sync.mid`: it counts in four beats on the Flipper, then plays the same tune on both, the Flipper an octave lower. Change the player's **Delay** row until the two sound as one.
 
 ### Player controls
 
-| Button | Action |
-|---|---|
-| OK | Play / stop |
-| Up / Down | Previous / next song (or MIDI file in the same folder) |
-| Left / Right | Tempo − / + |
-| Hold Up / Down | Key − / + (MIDI files) |
-| Hold Left / Right | MIDI channel (MIDI files) |
-| Back | Back to the menu |
+A MIDI file shows its settings as rows: **Melody** (the channel the ocarina plays, or **all**), **Harmony** and **Delay** (pad outputs), **Key** (with how many notes it leaves out of range) and **Tempo**.
+
+| Button | Built-in songs | MIDI files |
+|---|---|---|
+| OK | Play / stop | Play / stop |
+| Up / Down | Previous / next song | Pick a row |
+| Left / Right | Tempo − / + | Change the row |
+| Back | Back to the song list | Back to the file browser, at the same file |
 
 ## Advanced
 
 Button mapping, timing, pitch bends, vibrato depth and speaker pitch/volume are in `config.h`. `SPEAKER_FULL_DUTY` plays the speaker at full pulse width, louder than the firmware allows by default; set it to 0 to use the firmware's limit.
 
-`tools/make_test_midi.py` writes the test files in `test_midi/` (the full B3 to F5 range, with and without vibrato, and fast repeated notes). `tools/add_vibrato.py` adds vibrato to the long notes of any MIDI file.
+`tools/make_test_midi.py` writes the test files in `test_midi/` (the full B3 to F5 range, with and without vibrato, fast repeated notes, and a melody with an octave-down harmony for tuning the harmony delay). `tools/add_vibrato.py` adds vibrato to the long notes of any MIDI file.
 
 ## Credits
 
