@@ -15,6 +15,7 @@ typedef struct {
 typedef struct {
     MidiNote* notes;
     size_t count;
+    uint32_t offset_ms; /* where the first note was in the file; start_ms counts from it */
     bool truncated;
     uint16_t channel_mask;
 } MidiSong;

@@ -20,6 +20,12 @@
 #define SPEAKER_MIN_PITCH 36
 #define SPEAKER_MAX_PITCH 96
 
+/* Harmony on the speaker (pad outputs): default delay so it lines up with the game's ocarina,
+   which sounds after the button press. Change it in Settings. */
+#define HARMONY_DELAY_MS      100
+#define HARMONY_DELAY_STEP_MS 10
+#define HARMONY_DELAY_MAX_MS  500
+
 /* Full tilt is an exact 2-semitone bend: the game clamps there */
 #define BEND_STICK_UP   0x00
 #define BEND_STICK_DOWN 0xFF

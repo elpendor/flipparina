@@ -8,7 +8,8 @@ typedef void (*PlayerNoteCallback)(int32_t note_index, void* ctx);
 typedef void (*PlayerDoneCallback)(void* ctx);
 
 typedef struct Player Player;
-
+/* harmony (pad outputs only): a second part played on the Flipper speaker, NULL for none.
+   harmony_delay_ms holds it back to line up with the game's ocarina. */
 Player* player_start(
     const MidiSong* song,
     int transpose,
@@ -16,6 +17,8 @@ Player* player_start(
     OcOutput output,
     bool fold,
     const HoriReport* take_out,
+    const MidiSong* harmony,
+    uint32_t harmony_delay_ms,
     PlayerNoteCallback on_note,
     PlayerDoneCallback on_done,
     void* ctx);

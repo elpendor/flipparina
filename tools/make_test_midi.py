@@ -1,4 +1,4 @@
-"""Write chromatic.mid, chromatic_vibrato.mid and repeats.mid test files."""
+"""Write chromatic.mid, chromatic_vibrato.mid, repeats.mid and harmony_sync.mid test files."""
 import struct
 import sys
 from pathlib import Path
@@ -24,9 +24,10 @@ def write_midi(path: Path, notes, vibrato=0):
     events = []
     if vibrato:
         events.append((0, 0, bytes([0xB0, 1, vibrato])))
-    for pitch, on, off in notes:
-        events.append((ms_to_ticks(on), 1, bytes([0x90, pitch, 100])))
-        events.append((ms_to_ticks(off), 0, bytes([0x80, pitch, 0])))
+    for pitch, on, off, *ch in notes:
+        ch = ch[0] if ch else 0
+        events.append((ms_to_ticks(on), 1, bytes([0x90 | ch, pitch, 100])))
+        events.append((ms_to_ticks(off), 0, bytes([0x80 | ch, pitch, 0])))
     events.sort(key=lambda e: (e[0], e[1]))
 
     track = varlen(0) + b"\xff\x51\x03" + TEMPO.to_bytes(3, "big")
@@ -56,6 +57,15 @@ def main():
             t += length
         t += 600
     write_midi(out / "repeats.mid", repeats)
+
+    # Melody on channel 1, the same notes an octave down on channel 2, after a
+    # 4-beat count-in on channel 2 alone: tune Settings > Harmony delay until
+    # the two parts sound as one
+    sync = [(81, i * 500, i * 500 + 100, 1) for i in range(4)]
+    for i, p in enumerate([62, 65, 69, 65, 74, 69, 65, 62] * 2):
+        on = 2000 + i * 500
+        sync += [(p, on, on + 400, 0), (p - 12, on, on + 400, 1)]
+    write_midi(out / "harmony_sync.mid", sync)
 
 
 if __name__ == "__main__":

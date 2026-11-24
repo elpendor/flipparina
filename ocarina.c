@@ -170,7 +170,7 @@ size_t oc_next_playable(
     return from;
 }
 
-static uint32_t scale_ms(uint32_t ms, int tempo_pct) {
+uint32_t oc_scale_ms(uint32_t ms, int tempo_pct) {
     return (uint32_t)((uint64_t)ms * 100 / (uint32_t)tempo_pct);
 }
 
@@ -181,13 +181,13 @@ OcNoteWindow oc_note_window(
     const OcCombo* next_combo,
     int tempo_pct) {
     OcNoteWindow w = {.release = true};
-    w.press_ms = scale_ms(note->start_ms, tempo_pct);
+    w.press_ms = oc_scale_ms(note->start_ms, tempo_pct);
 
-    uint32_t end = scale_ms(note->start_ms + note->dur_ms, tempo_pct);
+    uint32_t end = oc_scale_ms(note->start_ms + note->dur_ms, tempo_pct);
     if(end < w.press_ms + MIN_NOTE_MS) end = w.press_ms + MIN_NOTE_MS;
 
     if(next) {
-        uint32_t next_start = scale_ms(next->start_ms, tempo_pct);
+        uint32_t next_start = oc_scale_ms(next->start_ms, tempo_pct);
         uint32_t limit = next_start;
         /* Release first if the game would hear the same note, or if the stick or D-pad moves */
         if(next_combo->pitch - next_combo->bend - next_combo->pad ==

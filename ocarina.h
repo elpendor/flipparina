@@ -50,6 +50,8 @@ bool oc_uses_pad(OcOutput output);
 
 float oc_pitch_hz(int pitch);
 
+uint32_t oc_scale_ms(uint32_t ms, int tempo_pct);
+
 void oc_combo_report(const OcCombo* combo, OcOutput output, HoriReport* report);
 
 OcStats oc_stats(const MidiSong* song, int transpose, OcOutput output, bool fold);

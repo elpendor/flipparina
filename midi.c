@@ -392,6 +392,7 @@ bool midi_load_file(
         uint32_t offset = a[0].ms.start_ms;
         for(size_t i = 0; i < m; i++)
             a[i].ms.start_ms -= offset;
+        song->offset_ms = offset;
 
         NoteSlot* shrunk = realloc(a, sizeof(NoteSlot) * m);
         song->notes = (MidiNote*)(shrunk ? shrunk : a);

@@ -19,6 +19,7 @@
 #define OUTPUT_FILE DATA_DIR "/layout.txt"
 #define OCARINA_C_FILE DATA_DIR "/ocarina_c.txt"
 #define FOLD_FILE      DATA_DIR "/out_of_range.txt"
+#define HARMONY_DELAY_FILE DATA_DIR "/harmony_delay.txt"
 
 #define SCREEN_W      128
 #define HEADER_Y      10
@@ -58,6 +59,7 @@ typedef enum {
     SettingOutput,
     SettingOcarinaC,
     SettingFold,
+    SettingHarmonyDelay,
     SettingCount,
 } SettingItem;
 
@@ -95,6 +97,17 @@ typedef enum {
     ActionOutputChanged,
 } Action;
 
+/* Rows of the MIDI player screen */
+typedef enum {
+    RowMelody,
+    RowHarmony,
+    RowKey,
+    RowTempo,
+    RowCount,
+} PlayerRow;
+
+static const char* const row_labels[RowCount] = {"Melody", "Harmony", "Key", "Tempo"};
+
 typedef enum {
     EvInput,
     EvPlayerDone,
@@ -116,6 +129,7 @@ typedef struct {
     OcOutput output;
     int ocarina_c; /* index into ocarina_c_buttons, -1 = ask */
     bool fold;
+    int harmony_delay_ms;
 
     Screen screen;
     Screen player_back;
@@ -123,6 +137,7 @@ typedef struct {
     int settings_index;
     int book;
     int song_index;
+    int player_row;
 
     FuriString* path;
     FuriString* title;
@@ -130,6 +145,8 @@ typedef struct {
     MidiSong song;
     bool builtin;
     int channel;
+    MidiSong harmony;
+    int harmony_channel; /* -1 = off */
     int transpose;
     int tempo_pct;
     OcStats stats;
@@ -147,6 +164,7 @@ static bool is_playing(const App* app) {
 
 static void reset_song(App* app, const char* title) {
     song_free(&app->song);
+    song_free(&app->harmony);
     furi_string_reset(app->error);
     furi_string_set(app->title, title);
     app->transpose = 0;
@@ -162,6 +180,14 @@ static bool load_file(App* app, int channel) {
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     bool ok = midi_load_file(storage, path, channel, &app->song, app->error);
+    int harmony = app->harmony_channel;
+    app->harmony_channel = -1;
+    if(ok && harmony >= 0 && (app->song.channel_mask & (1u << harmony))) {
+        FuriString* error = furi_string_alloc();
+        if(midi_load_file(storage, path, harmony, &app->harmony, error))
+            app->harmony_channel = harmony;
+        furi_string_free(error);
+    }
     furi_record_close(RECORD_STORAGE);
 
     if(ok) app->transpose = oc_best_transpose(&app->song, app->output, app->fold);
@@ -173,6 +199,7 @@ static void load_builtin(App* app, const OcSong* song) {
     reset_song(app, song->name);
     app->builtin = true;
     app->channel = -1;
+    app->harmony_channel = -1;
     if(!songs_build(song, &app->song)) furi_string_set(app->error, "Out of memory");
     app->stats = oc_stats(&app->song, app->transpose, app->output, app->fold);
 }
@@ -195,54 +222,77 @@ static void change_channel(App* app, int dir) {
     app->tempo_pct = tempo;
 }
 
-static bool is_midi_name(const char* name) {
-    size_t len = strlen(name);
-    return len > 4 && strcasecmp(name + len - 4, ".mid") == 0;
-}
+static void change_transpose(App* app, int delta);
 
-/* Next/previous .mid file in the current file's folder, alphabetically, wrapping */
-static void change_file(App* app, int dir) {
-    FuriString* folder = furi_string_alloc_set(app->path);
-    size_t slash = furi_string_search_rchar(folder, '/');
-    if(slash == FURI_STRING_FAILURE) {
-        furi_string_free(folder);
+/* Off, then each channel in the file */
+static void change_harmony(App* app, int dir) {
+    uint16_t mask = app->song.channel_mask;
+    int ch = app->harmony_channel;
+    do {
+        ch += dir;
+        if(ch > 15) ch = -1;
+        if(ch < -1) ch = 15;
+    } while(ch >= 0 && !(mask & (1u << ch)));
+    if(ch < 0) {
+        app->harmony_channel = -1;
+        song_free(&app->harmony);
         return;
     }
-    const char* current = furi_string_get_cstr(app->path) + slash + 1;
-    furi_string_left(folder, slash);
+    int tempo = app->tempo_pct, transpose = app->transpose;
+    app->harmony_channel = ch;
+    load_file(app, app->channel);
+    app->tempo_pct = tempo;
+    change_transpose(app, transpose - app->transpose);
+}
 
-    char name[128];
-    FuriString* best = furi_string_alloc();
-    FuriString* wrap = furi_string_alloc();
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-    File* d = storage_file_alloc(storage);
-    if(storage_dir_open(d, furi_string_get_cstr(folder))) {
-        FileInfo info;
-        while(storage_dir_read(d, &info, name, sizeof(name))) {
-            if((info.flags & FSF_DIRECTORY) || !is_midi_name(name)) continue;
-            int order = strcmp(name, current) * dir;
-            const char* b = furi_string_get_cstr(best);
-            const char* w = furi_string_get_cstr(wrap);
-            if(order > 0 && (furi_string_empty(best) || strcmp(name, b) * dir < 0))
-                furi_string_set(best, name);
-            if(furi_string_empty(wrap) || strcmp(name, w) * dir < 0) furi_string_set(wrap, name);
+/* A file with exactly two channels plays the first as the melody and,
+   with a pad output, the second as the harmony */
+static void open_file(App* app) {
+    app->harmony_channel = -1;
+    app->player_row = 0;
+    if(!load_file(app, -1)) return;
+    uint16_t mask = app->song.channel_mask;
+    if(__builtin_popcount(mask) != 2) return;
+    int first = __builtin_ctz(mask);
+    if(oc_uses_pad(app->output)) app->harmony_channel = __builtin_ctz(mask & (mask - 1));
+    load_file(app, first);
+}
+
+static int visible_rows(const App* app, PlayerRow* rows) {
+    int count = 0;
+    for(int i = 0; i < RowCount; i++) {
+        if(i == RowHarmony && !oc_uses_pad(app->output)) continue;
+        rows[count++] = (PlayerRow)i;
+    }
+    return count;
+}
+
+static void row_value(const App* app, PlayerRow row, char* out, size_t size) {
+    switch(row) {
+    case RowMelody:
+        if(app->channel < 0) {
+            snprintf(out, size, "all");
+        } else {
+            snprintf(out, size, "ch %d", app->channel + 1);
         }
+        break;
+    case RowHarmony:
+        if(app->harmony_channel < 0) {
+            snprintf(out, size, "off");
+        } else {
+            snprintf(out, size, "ch %d", app->harmony_channel + 1);
+        }
+        break;
+    case RowKey:
+        snprintf(out, size, "%+d", app->transpose);
+        break;
+    case RowTempo:
+        snprintf(out, size, "%d%%", app->tempo_pct);
+        break;
+    default:
+        out[0] = '\0';
+        break;
     }
-    storage_dir_close(d);
-    storage_file_free(d);
-    furi_record_close(RECORD_STORAGE);
-
-    FuriString* pick = furi_string_empty(best) ? wrap : best;
-    if(!furi_string_empty(pick) && strcmp(furi_string_get_cstr(pick), current) != 0) {
-        int tempo = app->tempo_pct;
-        furi_string_printf(
-            app->path, "%s/%s", furi_string_get_cstr(folder), furi_string_get_cstr(pick));
-        load_file(app, -1);
-        app->tempo_pct = tempo;
-    }
-    furi_string_free(best);
-    furi_string_free(wrap);
-    furi_string_free(folder);
 }
 
 static void change_transpose(App* app, int delta) {
@@ -273,6 +323,19 @@ static int load_setting(
         }
     }
     storage_file_free(file);
+    return value;
+}
+
+static int load_delay(Storage* storage) {
+    int value = HARMONY_DELAY_MS;
+    char text[12] = {0};
+    File* file = storage_file_alloc(storage);
+    if(storage_file_open(file, HARMONY_DELAY_FILE, FSAM_READ, FSOM_OPEN_EXISTING) &&
+       storage_file_read(file, text, sizeof(text) - 1) > 0) {
+        value = atoi(text);
+    }
+    storage_file_free(file);
+    if(value < 0 || value > HARMONY_DELAY_MAX_MS) value = HARMONY_DELAY_MS;
     return value;
 }
 
@@ -335,6 +398,8 @@ static void start_playback(App* app, bool take_out) {
         app->output,
         app->fold,
         take_out ? &report : NULL,
+        app->harmony_channel >= 0 ? &app->harmony : NULL,
+        (uint32_t)app->harmony_delay_ms,
         on_player_note,
         on_player_done,
         app);
@@ -373,6 +438,7 @@ static int visible_settings(const App* app, SettingItem* items) {
     int count = 0;
     for(int i = 0; i < SettingCount; i++) {
         if(i == SettingOcarinaC && app->output != OcOutputN64) continue;
+        if(i == SettingHarmonyDelay && !oc_uses_pad(app->output)) continue;
         items[count++] = (SettingItem)i;
     }
     return count;
@@ -389,6 +455,11 @@ static const char* setting_label(size_t position, const void* ctx) {
         return app->ocarina_c < 0 ? "Ocarina on: ask" : ocarina_c_labels[app->ocarina_c];
     case SettingFold:
         return app->fold ? "Out of range: Octave" : "Out of range: Skip";
+    case SettingHarmonyDelay: {
+        static char label[32];
+        snprintf(label, sizeof(label), "Harmony delay: %d ms", app->harmony_delay_ms);
+        return label;
+    }
     default:
         return "";
     }
@@ -532,13 +603,7 @@ static void draw_list(
 static void draw_error(Canvas* canvas, const App* app) {
     canvas_draw_str(canvas, 0, LINE_Y(1), "Error:");
     canvas_draw_str(canvas, 0, LINE_Y(2), furi_string_get_cstr(app->error));
-    draw_text(
-        canvas,
-        0,
-        LINE_Y(4),
-        app->song.channel_mask ? ARROW_UP ARROW_DOWN " file  Hold " ARROW_LEFT ARROW_RIGHT " channel" :
-                                 ARROW_UP ARROW_DOWN " file");
-    canvas_draw_str(canvas, 0, LINE_Y(5), "Back: menu");
+    canvas_draw_str(canvas, 0, LINE_Y(5), app->builtin ? "Back: songs" : "Back: files");
 }
 
 static void draw_playing(Canvas* canvas, const App* app) {
@@ -606,28 +671,33 @@ static void draw_builtin(Canvas* canvas, const App* app) {
 
 static void draw_midi(Canvas* canvas, const App* app) {
     char line[48];
+    bool cut = app->song.truncated || (app->harmony_channel >= 0 && app->harmony.truncated);
     snprintf(
         line,
         sizeof(line),
-        "Notes %u  oct %u  bend %u",
+        "%u notes  oct %u  bend %u%s",
         (unsigned)app->song.count,
         (unsigned)app->stats.moved,
-        (unsigned)app->stats.bent);
+        (unsigned)app->stats.bent,
+        cut ? "  cut" : "");
     canvas_draw_str(canvas, 0, LINE_Y(1), line);
 
-    snprintf(line, sizeof(line), "Key %+d  Tempo %d%%", app->transpose, app->tempo_pct);
-    canvas_draw_str(canvas, 0, LINE_Y(2), line);
-
-    char channel[12] = "all";
-    if(app->channel >= 0) snprintf(channel, sizeof(channel), "%d", app->channel + 1);
-    snprintf(
-        line, sizeof(line), "Channel: %s%s", channel, app->song.truncated ? " (cut)" : "");
-    canvas_draw_str(canvas, 0, LINE_Y(3), line);
-
-    draw_text(
-        canvas, 0, LINE_Y(4), "OK play " ARROW_UP ARROW_DOWN " file " ARROW_LEFT ARROW_RIGHT " tempo");
-    draw_text(
-        canvas, 0, LINE_Y(5), "Hold " ARROW_UP ARROW_DOWN " key " ARROW_LEFT ARROW_RIGHT " channel");
+    PlayerRow rows[RowCount];
+    int count = visible_rows(app, rows);
+    for(int i = 0; i < count; i++) {
+        char value[16];
+        row_value(app, rows[i], value, sizeof(value));
+        int y = LINE_Y(i + 2);
+        bool selected = i == app->player_row;
+        if(selected) {
+            canvas_draw_box(canvas, 0, y - 8, SCREEN_W, 10);
+            canvas_set_color(canvas, ColorWhite);
+        }
+        canvas_draw_str(canvas, 2, y, row_labels[rows[i]]);
+        canvas_draw_str(canvas, SCREEN_W - 2 - canvas_string_width(canvas, value), y, value);
+        if(selected) canvas_set_color(canvas, ColorBlack);
+    }
+    if(count + 1 < 5) canvas_draw_str(canvas, 0, LINE_Y(5), "OK play  Back files");
 }
 
 static void draw_callback(Canvas* canvas, void* ctx) {
@@ -728,7 +798,10 @@ static Action input_settings(App* app, const InputEvent* in) {
     SettingItem items[SettingCount];
     int count = visible_settings(app, items);
     if(move_selection(in, &app->settings_index, count)) return ActionNone;
-    if(in->type != InputTypeShort) return ActionNone;
+    /* Holding Left/Right steps the delay quickly */
+    bool step = in->type == InputTypeRepeat && items[app->settings_index] == SettingHarmonyDelay &&
+                (in->key == InputKeyLeft || in->key == InputKeyRight);
+    if(in->type != InputTypeShort && !step) return ActionNone;
     if(in->key == InputKeyBack) {
         MenuItem menu[MenuCount];
         int menu_count = visible_menu(app, menu);
@@ -755,6 +828,15 @@ static Action input_settings(App* app, const InputEvent* in) {
         app->fold = !app->fold;
         save_setting(FOLD_FILE, fold_ids[app->fold ? 0 : 1]);
         return ActionNone;
+    case SettingHarmonyDelay: {
+        int d = app->harmony_delay_ms + dir * HARMONY_DELAY_STEP_MS;
+        if(d < 0 || d > HARMONY_DELAY_MAX_MS) return ActionNone;
+        app->harmony_delay_ms = d;
+        char id[12];
+        snprintf(id, sizeof(id), "%d", d);
+        save_setting(HARMONY_DELAY_FILE, id);
+        return ActionNone;
+    }
     default:
         return ActionNone;
     }
@@ -783,33 +865,29 @@ static Action input_player(App* app, const InputEvent* in) {
         return ActionNone;
     }
 
-    if(is_short) {
-        switch(in->key) {
-        case InputKeyBack:
-            app->screen = app->player_back;
-            return ActionNone;
-        case InputKeyOk:
-            if(!can_play(app)) return ActionNone;
-            if(app->output == OcOutputSwitch2 && hori_usb_connection_id() != app->controlled_id)
-                return ActionFirstPlay;
-            if(oc_uses_pad(app->output)) return ActionAskOcarina;
-            start_playback(app, false);
-            return ActionNone;
-        case InputKeyRight:
-            change_tempo(app, TEMPO_STEP_PCT);
-            return ActionNone;
-        case InputKeyLeft:
-            change_tempo(app, -TEMPO_STEP_PCT);
-            return ActionNone;
-        default:
-            break;
-        }
+    if(is_short && in->key == InputKeyBack) {
+        app->screen = app->player_back;
+        /* MIDI files go back to the browser, at the same file; leaving it goes to the menu */
+        return app->builtin ? ActionNone : ActionPickFile;
+    }
+    if(is_short && in->key == InputKeyOk) {
+        if(!can_play(app)) return ActionNone;
+        if(app->output == OcOutputSwitch2 && hori_usb_connection_id() != app->controlled_id)
+            return ActionFirstPlay;
+        if(oc_uses_pad(app->output)) return ActionAskOcarina;
+        start_playback(app, false);
+        return ActionNone;
     }
 
     bool vertical = in->key == InputKeyUp || in->key == InputKeyDown;
+    bool horizontal = in->key == InputKeyLeft || in->key == InputKeyRight;
     int dir = (in->key == InputKeyDown || in->key == InputKeyRight) ? 1 : -1;
 
     if(app->builtin) {
+        if(horizontal && is_short) {
+            change_tempo(app, dir * TEMPO_STEP_PCT);
+            return ActionNone;
+        }
         const SongBook* book = &song_books[app->book];
         if(!vertical || !move_selection(in, &app->song_index, (int)book->count)) return ActionNone;
         int tempo = app->tempo_pct;
@@ -818,13 +896,29 @@ static Action input_player(App* app, const InputEvent* in) {
         return ActionNone;
     }
 
-    bool held = in->type == InputTypeLong || in->type == InputTypeRepeat;
-    if(vertical && is_short) {
-        change_file(app, dir);
-    } else if(vertical && held && furi_string_empty(app->error)) {
-        change_transpose(app, -dir);
-    } else if(!vertical && in->type == InputTypeLong && app->song.channel_mask) {
-        change_channel(app, dir);
+    /* MIDI files: Up/Down pick a row, Left/Right change it */
+    if(!furi_string_empty(app->error)) return ActionNone;
+    PlayerRow rows[RowCount];
+    int count = visible_rows(app, rows);
+    if(app->player_row >= count) app->player_row = count - 1;
+    if(move_selection(in, &app->player_row, count)) return ActionNone;
+    if(!horizontal || (!is_short && in->type != InputTypeRepeat)) return ActionNone;
+
+    switch(rows[app->player_row]) {
+    case RowMelody:
+        if(is_short && app->song.channel_mask) change_channel(app, dir);
+        break;
+    case RowHarmony:
+        if(is_short && app->song.channel_mask) change_harmony(app, dir);
+        break;
+    case RowKey:
+        change_transpose(app, dir);
+        break;
+    case RowTempo:
+        change_tempo(app, dir * TEMPO_STEP_PCT);
+        break;
+    default:
+        break;
     }
     return ActionNone;
 }
@@ -908,7 +1002,7 @@ static void pick_file(App* app) {
     if(ok) {
         furi_mutex_acquire(app->mutex, FuriWaitForever);
         furi_string_set(app->path, picked);
-        load_file(app, -1);
+        open_file(app);
         app->player_back = ScreenMenu;
         app->screen = ScreenPlayer;
         furi_mutex_release(app->mutex);
@@ -931,6 +1025,7 @@ static App* app_alloc(void) {
     memset(app, 0, sizeof(App));
     app->tempo_pct = 100;
     app->channel = -1;
+    app->harmony_channel = -1;
     app->current_note = -1;
     app->controlled_id = UINT32_MAX;
     app->screen = ScreenMenu;
@@ -946,6 +1041,7 @@ static App* app_alloc(void) {
     app->output = (OcOutput)load_setting(storage, OUTPUT_FILE, output_ids, OcOutputCount, 0);
     app->ocarina_c = load_setting(storage, OCARINA_C_FILE, ocarina_c_ids, OCARINA_C_COUNT, -1);
     app->fold = load_setting(storage, FOLD_FILE, fold_ids, 2, 1) == 0;
+    app->harmony_delay_ms = load_delay(storage);
     furi_record_close(RECORD_STORAGE);
 
     app->view_port = view_port_alloc();
