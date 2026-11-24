@@ -66,9 +66,9 @@ typedef enum {
 static const char* const fold_ids[] = {"octave", "skip"};
 
 static const char* const output_labels[OcOutputCount] = {
-    [OcOutputN64] = "Output: N64 (NSO)",
-    [OcOutputSwitch2] = "Output: Switch 2",
-    [OcOutputSpeaker] = "Output: Speaker (mic)",
+    [OcOutputN64] = "N64 (NSO)",
+    [OcOutputSwitch2] = "Switch 2",
+    [OcOutputSpeaker] = "Speaker (mic)",
 };
 
 static const char* const output_ids[OcOutputCount] = {
@@ -79,11 +79,7 @@ static const char* const output_ids[OcOutputCount] = {
 
 /* N64: the C button the ocarina is assigned to */
 static const OcButton ocarina_c_buttons[] = {OcCLeft, OcCDown, OcCRight};
-static const char* const ocarina_c_labels[] = {
-    "Ocarina on: C-Left",
-    "Ocarina on: C-Down",
-    "Ocarina on: C-Right",
-};
+static const char* const ocarina_c_labels[] = {"C-Left", "C-Down", "C-Right"};
 static const char* const ocarina_c_ids[] = {"left", "down", "right"};
 #define OCARINA_C_COUNT 3
 
@@ -101,12 +97,15 @@ typedef enum {
 typedef enum {
     RowMelody,
     RowHarmony,
+    RowDelay,
     RowKey,
     RowTempo,
     RowCount,
 } PlayerRow;
 
-static const char* const row_labels[RowCount] = {"Melody", "Harmony", "Key", "Tempo"};
+static const char* const row_labels[RowCount] = {"Melody", "Harmony", "Delay", "Key", "Tempo"};
+
+#define PLAYER_ROWS 4 /* visible at once; the hint takes the last line */
 
 typedef enum {
     EvInput,
@@ -138,6 +137,8 @@ typedef struct {
     int book;
     int song_index;
     int player_row;
+    bool key_manual; /* the user set Key: keep it when the melody channel changes */
+    bool harmony_manual; /* the user set Harmony: don't pick it automatically */
 
     FuriString* path;
     FuriString* title;
@@ -215,24 +216,17 @@ static int cycle_channel(const App* app, int dir) {
     return -1;
 }
 
-static void change_channel(App* app, int dir) {
-    uint16_t mask = app->song.channel_mask;
-    int tempo = app->tempo_pct;
-    if(!load_file(app, cycle_channel(app, dir))) app->song.channel_mask = mask;
-    app->tempo_pct = tempo;
-}
-
 static void change_transpose(App* app, int delta);
 
-/* Off, then each channel in the file */
-static void change_harmony(App* app, int dir) {
+static void change_channel(App* app, int dir) {
     uint16_t mask = app->song.channel_mask;
-    int ch = app->harmony_channel;
-    do {
-        ch += dir;
-        if(ch > 15) ch = -1;
-        if(ch < -1) ch = 15;
-    } while(ch >= 0 && !(mask & (1u << ch)));
+    int tempo = app->tempo_pct, transpose = app->transpose;
+    if(!load_file(app, cycle_channel(app, dir))) app->song.channel_mask = mask;
+    app->tempo_pct = tempo;
+    if(app->key_manual) change_transpose(app, transpose - app->transpose);
+}
+
+static void set_harmony(App* app, int ch) {
     if(ch < 0) {
         app->harmony_channel = -1;
         song_free(&app->harmony);
@@ -245,11 +239,25 @@ static void change_harmony(App* app, int dir) {
     change_transpose(app, transpose - app->transpose);
 }
 
+/* Off, then each channel in the file */
+static void change_harmony(App* app, int dir) {
+    uint16_t mask = app->song.channel_mask;
+    int ch = app->harmony_channel;
+    do {
+        ch += dir;
+        if(ch > 15) ch = -1;
+        if(ch < -1) ch = 15;
+    } while(ch >= 0 && !(mask & (1u << ch)));
+    set_harmony(app, ch);
+}
+
 /* A file with exactly two channels plays the first as the melody and,
    with a pad output, the second as the harmony */
 static void open_file(App* app) {
     app->harmony_channel = -1;
     app->player_row = 0;
+    app->key_manual = false;
+    app->harmony_manual = false;
     if(!load_file(app, -1)) return;
     uint16_t mask = app->song.channel_mask;
     if(__builtin_popcount(mask) != 2) return;
@@ -258,11 +266,27 @@ static void open_file(App* app) {
     load_file(app, first);
 }
 
+/* After switching to a pad output, a two-channel file gets its harmony,
+   unless the user already chose one */
+static void auto_harmony(App* app) {
+    uint16_t mask = app->song.channel_mask;
+    if(app->builtin || app->harmony_manual || !furi_string_empty(app->error)) return;
+    if(!oc_uses_pad(app->output) || app->harmony_channel >= 0) return;
+    if(__builtin_popcount(mask) != 2 || app->channel != __builtin_ctz(mask)) return;
+    set_harmony(app, __builtin_ctz(mask & (mask - 1)));
+}
+
+static bool shows_row(const App* app, PlayerRow row) {
+    bool pad = oc_uses_pad(app->output);
+    if(row == RowHarmony) return pad;
+    if(row == RowDelay) return pad && app->harmony_channel >= 0;
+    return true;
+}
+
 static int visible_rows(const App* app, PlayerRow* rows) {
     int count = 0;
     for(int i = 0; i < RowCount; i++) {
-        if(i == RowHarmony && !oc_uses_pad(app->output)) continue;
-        rows[count++] = (PlayerRow)i;
+        if(shows_row(app, (PlayerRow)i)) rows[count++] = (PlayerRow)i;
     }
     return count;
 }
@@ -283,8 +307,16 @@ static void row_value(const App* app, PlayerRow row, char* out, size_t size) {
             snprintf(out, size, "ch %d", app->harmony_channel + 1);
         }
         break;
+    case RowDelay:
+        snprintf(out, size, "%d ms", app->harmony_delay_ms);
+        break;
     case RowKey:
-        snprintf(out, size, "%+d", app->transpose);
+        /* The key decides which notes fit, so the skipped count lives here */
+        if(app->stats.skipped) {
+            snprintf(out, size, "%+d, %u skipped", app->transpose, (unsigned)app->stats.skipped);
+        } else {
+            snprintf(out, size, "%+d", app->transpose);
+        }
         break;
     case RowTempo:
         snprintf(out, size, "%d%%", app->tempo_pct);
@@ -300,6 +332,17 @@ static void change_transpose(App* app, int delta) {
     if(t < -TRANSPOSE_LIMIT || t > TRANSPOSE_LIMIT) return;
     app->transpose = t;
     app->stats = oc_stats(&app->song, t, app->output, app->fold);
+}
+
+static void save_setting(const char* path, const char* id);
+
+static void change_delay(App* app, int dir) {
+    int d = app->harmony_delay_ms + dir * HARMONY_DELAY_STEP_MS;
+    if(d < 0 || d > HARMONY_DELAY_MAX_MS) return;
+    app->harmony_delay_ms = d;
+    char id[12];
+    snprintf(id, sizeof(id), "%d", d);
+    save_setting(HARMONY_DELAY_FILE, id);
 }
 
 static void change_tempo(App* app, int delta) {
@@ -418,6 +461,7 @@ static void show_notice(App* app, const char* text) {
 }
 
 typedef const char* (*ListLabel)(size_t index, const void* ctx);
+typedef void (*ListValue)(size_t index, const void* ctx, char* out, size_t size);
 
 static int visible_menu(const App* app, MenuItem* items) {
     int count = 0;
@@ -444,25 +488,52 @@ static int visible_settings(const App* app, SettingItem* items) {
     return count;
 }
 
+static const char* const setting_names[SettingCount] = {
+    [SettingOutput] = "Output",
+    [SettingOcarinaC] = "Ocarina on",
+    [SettingFold] = "Out of range",
+    [SettingHarmonyDelay] = "Harmony delay",
+};
+
 static const char* setting_label(size_t position, const void* ctx) {
+    SettingItem items[SettingCount];
+    visible_settings(ctx, items);
+    return setting_names[items[position]];
+}
+
+static void setting_value(size_t position, const void* ctx, char* out, size_t size) {
     const App* app = ctx;
     SettingItem items[SettingCount];
     visible_settings(app, items);
     switch(items[position]) {
     case SettingOutput:
-        return output_labels[app->output];
+        snprintf(out, size, "%s", output_labels[app->output]);
+        break;
     case SettingOcarinaC:
-        return app->ocarina_c < 0 ? "Ocarina on: ask" : ocarina_c_labels[app->ocarina_c];
+        snprintf(out, size, "%s", app->ocarina_c < 0 ? "ask" : ocarina_c_labels[app->ocarina_c]);
+        break;
     case SettingFold:
-        return app->fold ? "Out of range: Octave" : "Out of range: Skip";
-    case SettingHarmonyDelay: {
-        static char label[32];
-        snprintf(label, sizeof(label), "Harmony delay: %d ms", app->harmony_delay_ms);
-        return label;
-    }
+        snprintf(out, size, "%s", app->fold ? "Octave" : "Skip");
+        break;
+    case SettingHarmonyDelay:
+        snprintf(out, size, "%d ms", app->harmony_delay_ms);
+        break;
     default:
-        return "";
+        out[0] = '\0';
+        break;
     }
+}
+
+static const char* row_label(size_t position, const void* ctx) {
+    PlayerRow rows[RowCount];
+    visible_rows(ctx, rows);
+    return row_labels[rows[position]];
+}
+
+static void row_value_at(size_t position, const void* ctx, char* out, size_t size) {
+    PlayerRow rows[RowCount];
+    visible_rows(ctx, rows);
+    row_value(ctx, rows[position], out, size);
 }
 
 static const char* song_label(size_t index, const void* ctx) {
@@ -555,7 +626,7 @@ static const char* status_label(const App* app) {
     if(app->screen == ScreenPlayer && is_playing(app)) return NULL;
     if(!oc_uses_pad(app->output)) return "Speaker";
     if(!app->usb_ok) return "USB busy";
-    return hori_usb_is_connected() ? "USB" : "--";
+    return hori_usb_is_connected() ? "USB" : "No USB";
 }
 
 static void draw_header(Canvas* canvas, const App* app, const char* title) {
@@ -574,30 +645,65 @@ static void draw_header(Canvas* canvas, const App* app, const char* title) {
     canvas_set_font(canvas, FontSecondary);
 }
 
+#define SCROLLBAR_W 4
+#define ARROW_W     4
+#define ARROW_GAP   3
+
+/* Rows from `line` down, `rows` at a time. With `value`, each row shows its value on the
+   right, with arrows on the selected one because Left/Right change it. */
+static void draw_rows(
+    Canvas* canvas,
+    int line,
+    int rows,
+    ListLabel label,
+    ListValue value,
+    const void* ctx,
+    size_t count,
+    int selected) {
+    canvas_set_font(canvas, FontSecondary);
+    if(selected >= (int)count) selected = (int)count - 1;
+    int first = selected - rows / 2;
+    if(first > (int)count - rows) first = (int)count - rows;
+    if(first < 0) first = 0;
+    bool scroll = (int)count > rows;
+    int width = scroll ? SCREEN_W - SCROLLBAR_W : SCREEN_W;
+
+    for(int row = 0; row < rows && first + row < (int)count; row++) {
+        int index = first + row;
+        int y = LINE_Y(line + row);
+        bool sel = index == selected;
+        if(sel) {
+            canvas_draw_box(canvas, 0, y - 8, width, 10);
+            canvas_set_color(canvas, ColorWhite);
+        }
+        canvas_draw_str(canvas, 2, y, label((size_t)index, ctx));
+        if(value) {
+            char text[32];
+            value((size_t)index, ctx, text, sizeof(text));
+            int right = width - 2;
+            if(sel) right -= ARROW_W + ARROW_GAP;
+            int x = right - (int)canvas_string_width(canvas, text);
+            canvas_draw_str(canvas, x, y, text);
+            if(sel) {
+                canvas_draw_icon(canvas, x - ARROW_GAP - ARROW_W, y - 7, &I_arrow_left_4x7);
+                canvas_draw_icon(canvas, right + ARROW_GAP, y - 7, &I_arrow_right_4x7);
+            }
+        }
+        if(sel) canvas_set_color(canvas, ColorBlack);
+    }
+    if(scroll) {
+        elements_scrollbar_pos(
+            canvas, SCREEN_W, LINE_Y(line) - 8, (size_t)rows * 10, (size_t)selected, count);
+    }
+}
+
 static void draw_list(
     Canvas* canvas,
     ListLabel label,
     const void* label_ctx,
     size_t count,
     int selected) {
-    canvas_set_font(canvas, FontSecondary);
-    int first = selected - LIST_ROWS / 2;
-    if(first > (int)count - LIST_ROWS) first = (int)count - LIST_ROWS;
-    if(first < 0) first = 0;
-
-    for(int row = 0; row < LIST_ROWS && first + row < (int)count; row++) {
-        int index = first + row;
-        int y = LINE_Y(row + 1);
-        const char* text = label((size_t)index, label_ctx);
-        if(index == selected) {
-            canvas_draw_box(canvas, 0, y - 8, SCREEN_W, 10);
-            canvas_set_color(canvas, ColorWhite);
-            canvas_draw_str(canvas, 2, y, text);
-            canvas_set_color(canvas, ColorBlack);
-        } else {
-            canvas_draw_str(canvas, 2, y, text);
-        }
-    }
+    draw_rows(canvas, 1, LIST_ROWS, label, NULL, label_ctx, count, selected);
 }
 
 static void draw_error(Canvas* canvas, const App* app) {
@@ -670,34 +776,13 @@ static void draw_builtin(Canvas* canvas, const App* app) {
 }
 
 static void draw_midi(Canvas* canvas, const App* app) {
-    char line[48];
-    bool cut = app->song.truncated || (app->harmony_channel >= 0 && app->harmony.truncated);
-    snprintf(
-        line,
-        sizeof(line),
-        "%u notes  oct %u  bend %u%s",
-        (unsigned)app->song.count,
-        (unsigned)app->stats.moved,
-        (unsigned)app->stats.bent,
-        cut ? "  cut" : "");
-    canvas_draw_str(canvas, 0, LINE_Y(1), line);
-
     PlayerRow rows[RowCount];
     int count = visible_rows(app, rows);
-    for(int i = 0; i < count; i++) {
-        char value[16];
-        row_value(app, rows[i], value, sizeof(value));
-        int y = LINE_Y(i + 2);
-        bool selected = i == app->player_row;
-        if(selected) {
-            canvas_draw_box(canvas, 0, y - 8, SCREEN_W, 10);
-            canvas_set_color(canvas, ColorWhite);
-        }
-        canvas_draw_str(canvas, 2, y, row_labels[rows[i]]);
-        canvas_draw_str(canvas, SCREEN_W - 2 - canvas_string_width(canvas, value), y, value);
-        if(selected) canvas_set_color(canvas, ColorBlack);
-    }
-    if(count + 1 < 5) canvas_draw_str(canvas, 0, LINE_Y(5), "OK play  Back files");
+    draw_rows(canvas, 1, PLAYER_ROWS, row_label, row_value_at, app, count, app->player_row);
+
+    bool cut = app->song.truncated || (app->harmony_channel >= 0 && app->harmony.truncated);
+    canvas_draw_str(
+        canvas, 0, LINE_Y(5), cut ? "OK play  (end cut: no RAM)" : "OK play  Back: files");
 }
 
 static void draw_callback(Canvas* canvas, void* ctx) {
@@ -715,7 +800,15 @@ static void draw_callback(Canvas* canvas, void* ctx) {
     case ScreenSettings: {
         SettingItem items[SettingCount];
         draw_header(canvas, app, "Settings");
-        draw_list(canvas, setting_label, app, visible_settings(app, items), app->settings_index);
+        draw_rows(
+            canvas,
+            1,
+            LIST_ROWS,
+            setting_label,
+            setting_value,
+            app,
+            visible_settings(app, items),
+            app->settings_index);
         break;
     }
     case ScreenSongs: {
@@ -818,6 +911,7 @@ static Action input_settings(App* app, const InputEvent* in) {
     case SettingOutput:
         app->output = (OcOutput)cycle(app->output, OcOutputCount, dir);
         save_setting(OUTPUT_FILE, output_ids[app->output]);
+        auto_harmony(app);
         return ActionOutputChanged;
     case SettingOcarinaC:
         app->ocarina_c = app->ocarina_c < 0 ? (dir > 0 ? 0 : OCARINA_C_COUNT - 1) :
@@ -828,15 +922,9 @@ static Action input_settings(App* app, const InputEvent* in) {
         app->fold = !app->fold;
         save_setting(FOLD_FILE, fold_ids[app->fold ? 0 : 1]);
         return ActionNone;
-    case SettingHarmonyDelay: {
-        int d = app->harmony_delay_ms + dir * HARMONY_DELAY_STEP_MS;
-        if(d < 0 || d > HARMONY_DELAY_MAX_MS) return ActionNone;
-        app->harmony_delay_ms = d;
-        char id[12];
-        snprintf(id, sizeof(id), "%d", d);
-        save_setting(HARMONY_DELAY_FILE, id);
+    case SettingHarmonyDelay:
+        change_delay(app, dir);
         return ActionNone;
-    }
     default:
         return ActionNone;
     }
@@ -871,7 +959,20 @@ static Action input_player(App* app, const InputEvent* in) {
         return app->builtin ? ActionNone : ActionPickFile;
     }
     if(is_short && in->key == InputKeyOk) {
-        if(!can_play(app)) return ActionNone;
+        if(!can_play(app)) {
+            /* Say why instead of ignoring the press; the error screen explains itself */
+            const char* why = NULL;
+            if(oc_uses_pad(app->output) && !app->usb_ok) {
+                why = "USB busy";
+            } else if(furi_string_empty(app->error) && app->stats.playable == 0) {
+                why = "No notes in range";
+            }
+            if(why) {
+                app->notice = why;
+                app->notice_until = furi_get_tick() + NOTICE_MS;
+            }
+            return ActionNone;
+        }
         if(app->output == OcOutputSwitch2 && hori_usb_connection_id() != app->controlled_id)
             return ActionFirstPlay;
         if(oc_uses_pad(app->output)) return ActionAskOcarina;
@@ -909,9 +1010,16 @@ static Action input_player(App* app, const InputEvent* in) {
         if(is_short && app->song.channel_mask) change_channel(app, dir);
         break;
     case RowHarmony:
-        if(is_short && app->song.channel_mask) change_harmony(app, dir);
+        if(is_short && app->song.channel_mask) {
+            app->harmony_manual = true;
+            change_harmony(app, dir);
+        }
+        break;
+    case RowDelay:
+        change_delay(app, dir);
         break;
     case RowKey:
+        app->key_manual = true;
         change_transpose(app, dir);
         break;
     case RowTempo:
@@ -987,7 +1095,7 @@ static void ask_ocarina(App* app) {
 
 static void pick_file(App* app) {
     DialogsFileBrowserOptions opts;
-    dialog_file_browser_set_basic_options(&opts, ".mid", NULL);
+    dialog_file_browser_set_basic_options(&opts, ".mid", &I_midi_10px);
     opts.base_path = DATA_DIR;
 
     FuriString* start = furi_string_alloc_set(app->path);
